@@ -1,10 +1,3 @@
-Here is a professional **README.md** file tailored specifically for your Final Year Project. This document serves as the "front page" of your project on GitHub and is essential for your thesis submission to explain how the software works.
-
-Create a new file named `README.md` in your main `ForestManager_FYP` folder and paste the following content into it.
-
------
-
-````markdown
 # Smart Forests Management: ForestManager App 🌳
 
 **Predicting Plant Growth and Supporting Silviculture Thinning Decisions Using Spatial Data**
