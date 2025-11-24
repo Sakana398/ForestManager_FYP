@@ -1,4 +1,4 @@
-# Smart Forests Management: ForestManager App 🌳
+# Smart Forests Management: ForestManager App
 
 **Predicting Plant Growth and Supporting Silviculture Thinning Decisions Using Spatial Data**
 
@@ -10,7 +10,7 @@
 
 ---
 
-## 📖 Project Overview
+##  Project Overview
 
 **ForestManager** is an interactive decision-support system designed to assist forest managers in the Pasoh Forest Reserve. Unlike traditional growth models that often ignore spatial context, this application integrates **Machine Learning (Linear Regression)** with **Spatial Competition Indices (Hegyi’s CI)** to predict individual tree growth and recommend precise silvicultural thinning operations.
 
@@ -21,20 +21,20 @@
 
 ---
 
-## ✨ Key Features
+##  Key Features
 
-* **📈 AI Growth Prediction:** Predicts future Diameter at Breast Height (DBH) using historical data and spatial features.
-* **📍 Spatial Analysis Engine:** Automatically calculates:
+* ** AI Growth Prediction:** Predicts future Diameter at Breast Height (DBH) using historical data and spatial features.
+* ** Spatial Analysis Engine:** Automatically calculates:
     * **Hegyi's Competition Index (CI):** Measures pressure from neighboring trees.
     * **Local Density:** Trees within a 5m radius.
     * **Nearest Neighbor Distance:** Proximity to the closest competitor.
-* **🌲 Dynamic Thinning Simulation:** Interactive sliders to filter trees based on growth performance, crowding, and proximity.
-* **🗺️ "Before & After" Visualization:** Spatial maps that allow managers to toggle between the current forest state and the post-thinning scenario.
-* **📥 Exportable Reports:** Generate and download CSV lists of thinning candidates for field use.
+* ** Dynamic Thinning Simulation:** Interactive sliders to filter trees based on growth performance, crowding, and proximity.
+* ** "Before & After" Visualization:** Spatial maps that allow managers to toggle between the current forest state and the post-thinning scenario.
+* ** Exportable Reports:** Generate and download CSV lists of thinning candidates for field use.
 
 ---
 
-## 🛠️ Installation & Setup
+##  Installation & Setup
 
 Follow these steps to run the project locally on your machine.
 
@@ -70,7 +70,7 @@ pip install -r requirements.txt
 
 -----
 
-## 🚀 Usage Guide
+##  Usage Guide
 
 The application consists of two parts: the **Model Training Pipeline** and the **Streamlit Dashboard**.
 
@@ -97,7 +97,7 @@ The app will open automatically in your default web browser (usually at `http://
 
 -----
 
-## 📂 Project Structure
+##  Project Structure
 
 This project uses a modular "Modulith" architecture for scalability.
 
@@ -123,7 +123,7 @@ ForestManager_FYP/
 
 -----
 
-## 📊 Methodology Summary
+##  Methodology Summary
 
 1.  **Data Preprocessing:** Cleaning `Data Pasoh.csv`, handling missing values, and removing BOM artifacts.
 2.  **Spatial Feature Engineering:** Using `scipy.spatial.cKDTree` to calculate Hegyi's Competition Index and neighbor distances.
@@ -133,7 +133,7 @@ ForestManager_FYP/
 
 -----
 
-## 📜 License & Acknowledgements
+##  License & Acknowledgements
 
   * **Data Source:** Plot Ekologi 2ha 03 Pasoh (FRIM).
   * **Frameworks:** Streamlit, Scikit-Learn, Altair, Pandas.
