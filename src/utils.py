@@ -18,47 +18,79 @@ def load_model_resources():
 
 def calculate_competition_index(df, radius=COMPETITION_RADIUS):
     """
-    Calculates Hegyi's Competition Index (CI).
+    Calculates Hegyi's Competition Index (CI) using Vectorized NumPy operations.
     CI = Sum( (Neighbor_DBH / Subject_DBH) / Distance )
+    
+    Performance Note:
+    This vectorized version is significantly faster than iterating through rows.
     """
-    # We need coordinates and DBH (using D19 as current size)
-    # Filter out trees with missing DBH or Coords
+    # 1. Prepare Data
+    # Filter valid trees (must have Coords and DBH). 
+    # D19 is used as the current diameter for competition calculations.
     valid_trees = df.dropna(subset=['XCO', 'YCO', 'D19']).copy()
+    valid_trees.reset_index(drop=True, inplace=True)
     
-    # Reset index to ensure alignment
-    valid_trees = valid_trees.reset_index(drop=True)
-    
+    # If no valid trees, return early
+    if valid_trees.empty:
+        df['Competition_Index'] = 0.0
+        return df
+
+    # Extract numpy arrays for high-speed processing
     coords = valid_trees[['XCO', 'YCO']].values
     dbh = valid_trees['D19'].values
+    n_trees = len(valid_trees)
     
+    # 2. Build Spatial Tree
     tree = cKDTree(coords)
     
-    # Find all neighbors within radius
-    # returns a list of lists: [ [neighbor_idx_1, neighbor_idx_2], ... ]
-    neighbors_list = tree.query_ball_point(coords, r=radius)
+    # 3. Find Pairs (Vectorized)
+    # query_pairs finds all unique pairs (i, j) where dist(i,j) < r and i < j
+    # This avoids calculating the full distance matrix (N*N), saving huge memory.
+    pairs_set = tree.query_pairs(r=radius)
     
-    ci_scores = []
-    
-    for i, neighbors in enumerate(neighbors_list):
-        subject_dbh = dbh[i]
-        subject_ci = 0
+    if not pairs_set:
+        valid_trees['Competition_Index'] = 0.0
+    else:
+        # Convert set of pairs to a NumPy array: shape (N_pairs, 2)
+        pairs = np.array(list(pairs_set))
         
-        for n_idx in neighbors:
-            if i == n_idx: continue # Skip self
-            
-            neighbor_dbh = dbh[n_idx]
-            dist = np.linalg.norm(coords[i] - coords[n_idx])
-            
-            if dist > 0:
-                # Hegyi's Index Formula
-                pressure = (neighbor_dbh / subject_dbh) / dist
-                subject_ci += pressure
-                
-        ci_scores.append(subject_ci)
+        # 4. Calculate Distances & Interactions
+        idx_a = pairs[:, 0]
+        idx_b = pairs[:, 1]
         
-    valid_trees['Competition_Index'] = ci_scores
+        # Get coordinates and calculate Euclidean distances
+        vec_diff = coords[idx_a] - coords[idx_b]
+        dists = np.linalg.norm(vec_diff, axis=1)
+        
+        # Avoid division by zero (unlikely with query_pairs > 0, but good practice)
+        dists = np.maximum(dists, 1e-6)
+        
+        # Get DBH values
+        dbh_a = dbh[idx_a]
+        dbh_b = dbh[idx_b]
+        
+        # 5. Compute Bidirectional CI
+        # If A and B are neighbors:
+        # A exerts pressure on B: (DBH_A / DBH_B) / dist
+        pressure_on_b = (dbh_a / dbh_b) / dists
+        
+        # B exerts pressure on A: (DBH_B / DBH_A) / dist
+        pressure_on_a = (dbh_b / dbh_a) / dists
+        
+        # 6. Aggregate Scores
+        # Sum the pressures for each tree index
+        # np.bincount is a very fast way to sum values at specific indices
+        ci_a = np.bincount(idx_a, weights=pressure_on_a, minlength=n_trees)
+        ci_b = np.bincount(idx_b, weights=pressure_on_b, minlength=n_trees)
+        
+        # Total CI is the sum of pressure received from all neighbors
+        valid_trees['Competition_Index'] = ci_a + ci_b
     
-    # Merge back to original dataframe
+    # 7. Merge back to original DataFrame
+    # If column exists, drop it to avoid duplication during merge
+    if 'Competition_Index' in df.columns:
+        df = df.drop(columns=['Competition_Index'])
+        
     return df.merge(valid_trees[['TAG', 'Competition_Index']], on='TAG', how='left')
 
 @st.cache_data
@@ -75,6 +107,8 @@ def load_and_process_data(csv_path):
         df.rename(columns=lambda x: x.replace('ï»¿', ''), inplace=True)
         if 'SP' in df.columns:
             df['SP'] = df['SP'].astype(str).str.strip()
+        
+        # Replace 0s with NA to prevent division by zero in CI calculations
         df.replace(0, pd.NA, inplace=True)
 
         # 3. Basic Spatial Features
@@ -89,7 +123,7 @@ def load_and_process_data(csv_path):
             
             df = df.merge(spatial_df[['TAG', 'Nearest_Neighbor_Dist', 'Local_Density']], on='TAG', how='left')
 
-        # 4. ADVANCED: Calculate Competition Index
+        # 4. ADVANCED: Calculate Competition Index (Now Vectorized!)
         df = calculate_competition_index(df)
 
         # 5. Prepare for Prediction
