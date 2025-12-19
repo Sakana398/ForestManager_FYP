@@ -8,7 +8,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📈 Individual Tree Growth Trends")
+st.title("Individual Tree Growth Trends")
 
 # Check for FULL data from the Home page
 if 'df' in st.session_state:

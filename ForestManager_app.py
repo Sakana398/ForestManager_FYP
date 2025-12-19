@@ -42,7 +42,7 @@ if df is not None and model is not None:
         st.session_state['df_thinning_recs'] = df_thinning
 
         # 6. Main Dashboard
-        st.title("🌳 ForestManager Dashboard")
+        st.title("ForestManager Dashboard")
         
         # Metric Row
         col1, col2, col3 = st.columns(3)

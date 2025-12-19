@@ -5,7 +5,7 @@ import pandas as pd
 
 st.set_page_config(page_title="ForestManager | Spatial Map", layout="wide")
 
-st.title("🗺️ Spatial Map of Thinning Recommendations")
+st.title("Spatial Map of Thinning Recommendations")
 
 if 'df' in st.session_state and 'df_thinning_recs' in st.session_state:
     df_all = st.session_state['df'].copy()
