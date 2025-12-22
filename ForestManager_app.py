@@ -8,16 +8,12 @@ st.set_page_config(page_title="ForestManager | Home", layout="wide")
 # ==========================================
 # 1. GLOBAL DATA LOADING
 # ==========================================
-# We load data here so it is available for all pages (Dashboard, Map, Growth)
 with st.spinner('Initializing ForestManager System...'):
-    # Load raw data
     if 'df' not in st.session_state:
         df = load_and_process_data(DATA_FILENAME)
         model, encoder = load_model_resources()
         
-        # Pre-calculate predictions if valid
         if df is not None and model is not None:
-             # Check if we need to run predictions
             if 'Predicted_Growth' not in df.columns:
                 df = run_predictions(df, model, encoder)
             
@@ -29,7 +25,7 @@ with st.spinner('Initializing ForestManager System...'):
 # ==========================================
 # 2. LANDING PAGE CONTENT
 # ==========================================
-st.title("Welcome to ForestManager")
+st.title("🌲 Welcome to ForestManager")
 st.subheader("AI-Driven Silvicultural Decision Support System")
 
 col1, col2 = st.columns([3, 2])
@@ -58,9 +54,9 @@ with col1:
     
     st.write("---")
     
-    # Navigation Button
+    # --- NAVIGATION: Home -> Dashboard ---
     if st.session_state.get('model_loaded'):
-        if st.button("🚀 Launch Dashboard", type="primary"):
+        if st.button("🚀 Launch Dashboard ➡️", type="primary", use_container_width=True):
             st.switch_page("pages/0_Dashboard.py")
     else:
         st.error("System Error: Data or Model could not be loaded. Please check your files.")
