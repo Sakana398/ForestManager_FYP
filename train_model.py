@@ -13,7 +13,7 @@ import warnings
 
 warnings.filterwarnings("ignore") # Clean output
 
-print("🚀 Starting Advanced Model Training...")
+print("Starting Advanced Model Training...")
 
 # 1. Load & Clean
 try:
