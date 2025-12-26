@@ -4,11 +4,10 @@ import joblib
 from scipy.spatial import cKDTree
 import numpy as np
 import streamlit as st
-from .config import * # Import constants
+from .config import * # Imports COL_CURRENT, COL_HISTORY, etc.
 
 @st.cache_resource
 def load_model_resources():
-    """Loads the trained model and the species encoder."""
     try:
         model = joblib.load(MODEL_FILENAME)
         encoder = joblib.load(ENCODER_FILENAME)
@@ -17,105 +16,107 @@ def load_model_resources():
         return None, None
 
 def calculate_competition_index(df, radius=COMPETITION_RADIUS):
-    """
-    Calculates Hegyi's Competition Index (CI).
-    CI = Sum( (Neighbor_DBH / Subject_DBH) / Distance )
-    """
-    # We need coordinates and DBH (using D19 as current size)
-    # Filter out trees with missing DBH or Coords
-    valid_trees = df.dropna(subset=['XCO', 'YCO', 'D19']).copy()
-    
-    # Reset index to ensure alignment
-    valid_trees = valid_trees.reset_index(drop=True)
-    
-    coords = valid_trees[['XCO', 'YCO']].values
-    dbh = valid_trees['D19'].values
+    # Dynamic Check: Do we have the "Current" column?
+    if COL_CURRENT not in df.columns: return df
+
+    # Drop invalid rows for spatial calc
+    valid_trees = df.dropna(subset=[COL_X, COL_Y, COL_CURRENT]).copy().reset_index(drop=True)
+    coords = valid_trees[[COL_X, COL_Y]].values
+    dbh = valid_trees[COL_CURRENT].values
     
     tree = cKDTree(coords)
-    
-    # Find all neighbors within radius
-    # returns a list of lists: [ [neighbor_idx_1, neighbor_idx_2], ... ]
     neighbors_list = tree.query_ball_point(coords, r=radius)
     
     ci_scores = []
-    
     for i, neighbors in enumerate(neighbors_list):
         subject_dbh = dbh[i]
         subject_ci = 0
-        
         for n_idx in neighbors:
-            if i == n_idx: continue # Skip self
-            
-            neighbor_dbh = dbh[n_idx]
+            if i == n_idx: continue
             dist = np.linalg.norm(coords[i] - coords[n_idx])
-            
             if dist > 0:
-                # Hegyi's Index Formula
-                pressure = (neighbor_dbh / subject_dbh) / dist
-                subject_ci += pressure
-                
+                n_dbh = dbh[n_idx]
+                # Only calculate if both trees are alive (dbh > 0)
+                if n_dbh > 0 and subject_dbh > 0:
+                    subject_ci += (n_dbh / subject_dbh) / dist
         ci_scores.append(subject_ci)
         
     valid_trees['Competition_Index'] = ci_scores
-    
-    # Merge back to original dataframe
-    return df.merge(valid_trees[['TAG', 'Competition_Index']], on='TAG', how='left')
+    return df.merge(valid_trees[[COL_ID, 'Competition_Index']], on=COL_ID, how='left')
 
 @st.cache_data
 def load_and_process_data(csv_path):
     try:
-        # 1. Load Data
         try:
             df = pd.read_csv(csv_path, encoding='utf-8-sig')
-        except UnicodeDecodeError:
+        except:
             df = pd.read_csv(csv_path, encoding='latin1')
-            
-        # 2. Clean Names & Data
-        df.columns = df.columns.str.strip()
-        df.rename(columns=lambda x: x.replace('ï»¿', ''), inplace=True)
-        if 'SP' in df.columns:
-            df['SP'] = df['SP'].astype(str).str.strip()
-        df.replace(0, pd.NA, inplace=True)
 
-        # 3. Basic Spatial Features
-        spatial_df = df.dropna(subset=['XCO', 'YCO']).copy()
+        df.columns = df.columns.str.strip()
+        
+        # Clean Text Columns
+        if COL_SPECIES in df.columns: 
+            df[COL_SPECIES] = df[COL_SPECIES].astype(str).str.strip()
+        if COL_SPECIES_GRP in df.columns: 
+            df[COL_SPECIES_GRP] = df[COL_SPECIES_GRP].astype(str).str.strip()
+        
+        # Clean Numeric Columns
+        cols_to_clean = [COL_HISTORY, COL_CURRENT, COL_TARGET]
+        for c in cols_to_clean:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+                df[c].replace(0, np.nan, inplace=True)
+
+        # 1. Feature: Past Growth (History -> Current)
+        if COL_HISTORY in df.columns and COL_CURRENT in df.columns:
+            df['GROWTH_HIST'] = df[COL_CURRENT] - df[COL_HISTORY]
+
+        # 2. Spatial Calculations (Based on Current State)
+        spatial_df = df.dropna(subset=[COL_X, COL_Y, COL_CURRENT]).copy()
         if not spatial_df.empty:
-            tree = cKDTree(spatial_df[['XCO', 'YCO']].values)
-            distances, _ = tree.query(spatial_df[['XCO', 'YCO']].values, k=2)
-            spatial_df['Nearest_Neighbor_Dist'] = distances[:, 1]
+            coords = spatial_df[[COL_X, COL_Y]].values
+            tree = cKDTree(coords)
             
-            counts = tree.query_ball_point(spatial_df[['XCO', 'YCO']].values, r=DENSITY_RADIUS, return_length=True)
+            # Distance
+            dists, _ = tree.query(coords, k=2)
+            spatial_df['Nearest_Neighbor_Dist'] = dists[:, 1]
+            
+            # Density
+            counts = tree.query_ball_point(coords, r=DENSITY_RADIUS, return_length=True)
             spatial_df['Local_Density'] = counts - 1
             
-            df = df.merge(spatial_df[['TAG', 'Nearest_Neighbor_Dist', 'Local_Density']], on='TAG', how='left')
+            df = df.merge(spatial_df[[COL_ID, 'Nearest_Neighbor_Dist', 'Local_Density']], on=COL_ID, how='left')
 
-        # 4. ADVANCED: Calculate Competition Index
         df = calculate_competition_index(df)
 
-        # 5. Prepare for Prediction
-        df.dropna(subset=['D17', 'D19', 'Competition_Index'], inplace=True)
-        df['GROWTH1719'] = df['D19'] - df['D17']
+        # Drop rows that lack data for App visualization
+        df.dropna(subset=[COL_CURRENT, 'GROWTH_HIST', 'Competition_Index'], inplace=True)
         
         return df
-    except FileNotFoundError:
-        st.error(f"File not found: {csv_path}")
+
+    except Exception as e:
+        st.error(f"Data Load Error: {e}")
         return None
 
 def run_predictions(df, model, encoder):
-    """Runs predictions using Model + Encoder."""
     # Encode Species
-    # We use 'map' with the classes_ from the encoder to be safe
-    species_map = {species: i for i, species in enumerate(encoder.classes_)}
-    df['SP_Encoded'] = df['SP'].map(species_map).fillna(-1) # -1 for unknown species
+    if 'SP_Encoded' not in df.columns:
+        known_classes = encoder.classes_
+        map_dict = {sp: i for i, sp in enumerate(known_classes)}
+        df['SP_Encoded'] = df[COL_SPECIES].map(map_dict).fillna(-1) 
     
-    features = ['D19', 'GROWTH1719', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
+    # Feature Vector (Using Config Constants)
+    # The model will be trained on these exact column names
+    features = [COL_CURRENT, 'GROWTH_HIST', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
     
-    # Drop rows with missing features
-    df_pred = df[features].dropna()
+    pred_df = df[features].dropna()
+    pred_df = pred_df[pred_df['SP_Encoded'] != -1]
     
-    if not df_pred.empty:
-        df_pred['Predicted_D21'] = model.predict(df_pred)
-        df_pred['Predicted_Growth'] = df_pred['Predicted_D21'] - df_pred['D19']
-        return df.join(df_pred[['Predicted_D21', 'Predicted_Growth']])
-    
+    if not pred_df.empty:
+        # Predict Future Size (e.g., D10)
+        predicted_future = model.predict(pred_df)
+        
+        df.loc[pred_df.index, 'Predicted_Size'] = predicted_future 
+        df.loc[pred_df.index, 'Predicted_Growth'] = predicted_future - pred_df[COL_CURRENT]
+        
     return df
