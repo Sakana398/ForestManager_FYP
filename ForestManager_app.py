@@ -27,7 +27,7 @@ with st.spinner('Initializing ForestManager System...'):
 # ==========================================
 def landing_page():
     st.title("🌲 ForestManager")
-    st.subheader("Intelligent Silvicultural Decision Support System")
+    st.subheader("Forest Thinning Decision Support System")
     st.markdown("---")
 
     col1, col2 = st.columns([3, 2])
