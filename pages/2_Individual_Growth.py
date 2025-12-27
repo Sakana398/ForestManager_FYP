@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from src.config import *
+import numpy as np
 
 st.set_page_config(page_title="ForestManager | Growth Analysis", layout="wide")
 
@@ -39,8 +40,7 @@ if 'df' in st.session_state:
     # ==========================================
     tree_data = df[df[COL_ID] == selected_tag].iloc[0]
     
-    # Define timeline mapping (Adjust if your config columns map to different years)
-    # History (2000), Current (2005), Target (2010)
+    # Define timeline mapping
     timeline_map = {
         2000: COL_HISTORY, 
         2005: COL_CURRENT, 
@@ -55,21 +55,20 @@ if 'df' in st.session_state:
     for year, col_name in timeline_map.items():
         if col_name in df.columns:
             val = tree_data[col_name]
+            # Handle NaN or 0 values gracefully
             if pd.notna(val) and val > 0:
                 history_points.append({"Year": year, "DBH": val, "Type": "Measured"})
-                # Track the last valid point to connect the red line later
                 last_measured_year = year
                 last_measured_val = val
 
     df_history = pd.DataFrame(history_points)
 
     # 2. Build Predicted Data (Red Line)
-    # This line must START at the last measured point and END at the prediction
     prediction_points = []
     
     if 'Predicted_Size' in tree_data and pd.notna(tree_data['Predicted_Size']):
         pred_val = tree_data['Predicted_Size']
-        pred_year = 2015 # Assuming 5-year step
+        pred_year = 2015 
         
         if last_measured_year is not None:
             # Anchor point (Start of Red Line)
@@ -80,7 +79,7 @@ if 'df' in st.session_state:
     df_pred = pd.DataFrame(prediction_points)
 
     # ==========================================
-    # 3. VISUALIZATION (Multi-Layer Chart)
+    # 3. VISUALIZATION
     # ==========================================
     col_viz, col_stats = st.columns([2, 1])
     
@@ -89,7 +88,7 @@ if 'df' in st.session_state:
             # Layer A: Historical Line (Green)
             chart_hist = alt.Chart(df_history).mark_line(
                 point=True, 
-                color='#2e7d32', # Green
+                color='#2e7d32', 
                 strokeWidth=3
             ).encode(
                 x=alt.X('Year:O', axis=alt.Axis(title="Year")),
@@ -98,12 +97,11 @@ if 'df' in st.session_state:
             )
             
             # Layer B: Predicted Line (Red)
-            # We only add this layer if we have prediction data
             if not df_pred.empty:
                 chart_pred = alt.Chart(df_pred).mark_line(
                     point=True, 
-                    color='#d32f2f', # Red
-                    strokeDash=[5, 5], # Dashed line for effect
+                    color='#d32f2f', 
+                    strokeDash=[5, 5], 
                     strokeWidth=3
                 ).encode(
                     x=alt.X('Year:O'),
@@ -111,7 +109,6 @@ if 'df' in st.session_state:
                     tooltip=['Year', 'DBH', 'Type']
                 )
                 
-                # Combine layers
                 final_chart = (chart_hist + chart_pred).properties(
                     title=f"Growth Progression: Tree #{selected_tag}",
                     height=400
@@ -120,13 +117,14 @@ if 'df' in st.session_state:
                 final_chart = chart_hist.properties(title=f"Growth History: Tree #{selected_tag}")
 
             st.altair_chart(final_chart, use_container_width=True)
-            
-            # Legend / Key
             st.caption("🟢 **Solid Green Line:** Historical Measurement | 🔴 **Dashed Red Line:** AI Prediction")
             
         else:
             st.warning("No historical data available for this tree.")
 
+    # ==========================================
+    # 4. TREE STATISTICS (RIGHT PANEL)
+    # ==========================================
     with col_stats:
         st.subheader("Tree Details")
         st.write(f"**Species:** {tree_data.get(COL_SPECIES, 'Unknown')}")
@@ -135,28 +133,64 @@ if 'df' in st.session_state:
             
         st.divider()
         
-        # Display Growth Rate
+        # --- MORTALITY RISK SECTION (NEW) ---
+        if 'Mortality_Risk' in tree_data:
+            risk_val = tree_data['Mortality_Risk'] # Float 0.0 to 1.0
+            risk_pct = risk_val * 100
+            
+            # Logic for Labels and Colors
+            if risk_pct > 50:
+                risk_label = "⚠️ High Risk"
+                delta_color = "inverse" # Red in Streamlit logic for 'normal' delta
+                bar_color = "red"
+            elif risk_pct > 20:
+                risk_label = "Moderate Risk"
+                delta_color = "off"
+                bar_color = "yellow"
+            else:
+                risk_label = "Low Risk (Healthy)"
+                delta_color = "normal" # Green
+                bar_color = "green"
+
+            st.metric(
+                "Mortality Risk", 
+                f"{risk_pct:.1f}%", 
+                delta=risk_label,
+                delta_color=delta_color
+            )
+            
+            # Visual Progress Bar for Survival (Inverse of Risk)
+            st.write("Survival Probability:")
+            st.progress(int(100 - risk_pct))
+            
+        st.divider()
+
+        # Growth & Competition Metrics
         if 'Predicted_Growth' in tree_data:
             pg = tree_data['Predicted_Growth']
             st.metric(
                 "Predicted Growth (5yr)", 
                 f"{pg:.2f} cm",
-                delta="Future Trend"
+                help="Projected diameter increase over the next 5 years."
             )
             
         if 'Competition_Index' in tree_data:
-            st.metric("Competition Index", f"{tree_data['Competition_Index']:.2f}")
+            ci = tree_data['Competition_Index']
+            st.metric(
+                "Competition Index", 
+                f"{ci:.2f}",
+                help="Higher index means more stress from neighbors."
+            )
 
-        # Show Values Table
-        st.markdown("#### Data Points")
-        # Combine for display
-        display_rows = history_points + [p for p in prediction_points if p['Year'] == 2015]
-        for row in display_rows:
-            label = "🔮 Predicted" if row['Year'] == 2015 else "📏 Measured"
-            st.text(f"{row['Year']}: {row['DBH']:.2f} cm  ({label})")
+        # Raw Data Table
+        with st.expander("View Raw Data Points"):
+            display_rows = history_points + [p for p in prediction_points if p['Year'] == 2015]
+            for row in display_rows:
+                icon = "🔮" if row['Type'] == "Predicted" else "📏"
+                st.text(f"{icon} {row['Year']}: {row['DBH']:.2f} cm")
 
     # ==========================================
-    # 4. NAVIGATION
+    # 5. NAVIGATION
     # ==========================================
     st.markdown("---")
     col_nav1, col_nav3 = st.columns([1, 1])

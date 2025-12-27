@@ -49,8 +49,8 @@ else:
 # 4. LANDING PAGE CONTENT
 # ==========================================
 def landing_page():
-    st.title("🌲 ForestManager")
-    st.subheader("Intelligent Silvicultural Decision Support System")
+    st.title("🌲 ForestOps")
+    st.subheader("Forest Thinning Decision Support System")
     st.markdown("---")
 
     col1, col2 = st.columns([3, 2])

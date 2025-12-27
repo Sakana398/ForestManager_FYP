@@ -36,7 +36,7 @@ if 'df' in st.session_state:
                 
                 all_species = sorted(available_species)
                 
-                use_all_species = st.checkbox("✅ Select All Species", value=False)
+                use_all_species = st.checkbox("Select All Species", value=False)
                 if use_all_species:
                     selected_species = all_species
                     st.multiselect("Select Species:", all_species, default=all_species, disabled=True, key="sp_dis")
@@ -82,9 +82,9 @@ if 'df' in st.session_state:
         
         df_thinning = df_filtered[conditions].copy()
         
-        # --- NEW: CALCULATE MORTALITY FOR DISPLAY ---
+        # --- CALCULATE MORTALITY FOR DISPLAY ---
         if 'Mortality_Risk' in df_thinning.columns:
-            # Create a nice percentage column for display
+            # We round percentage to 1 decimal place as it's standard for %
             df_thinning['Mortality Risk (%)'] = (df_thinning['Mortality_Risk'] * 100).round(1)
             avg_risk = df_thinning['Mortality Risk (%)'].mean()
         else:
@@ -94,7 +94,7 @@ if 'df' in st.session_state:
         st.session_state['df_thinning_recs'] = df_thinning
 
         # ==========================================
-        # 3. RESULTS (UPDATED)
+        # 3. RESULTS
         # ==========================================
         st.subheader("📊 Simulation Results")
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -103,7 +103,6 @@ if 'df' in st.session_state:
         m_col2.metric("Growth Cutoff", f"≤ {growth_thresh:.3f}")
         m_col3.metric("Competition Floor", f"Index ≥ {ci_limit}")
         
-        # --- NEW METRIC ---
         m_col4.metric(
             "Avg. Mortality Risk", 
             f"{avg_risk:.1f}%", 
@@ -117,21 +116,30 @@ if 'df' in st.session_state:
             csv = df_thinning.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download CSV", csv, 'thinning_candidates.csv', 'text/csv', type="primary")
             
-            # --- UPDATED TABLE COLUMNS ---
+            # --- TABLE DISPLAY PREPARATION ---
             display_cols = [
                 COL_ID, 
                 COL_SPECIES_GRP, 
                 COL_SPECIES, 
                 'Predicted_Growth', 
                 'Competition_Index', 
-                'Mortality Risk (%)',  # <--- SHOW IT HERE
+                'Mortality Risk (%)', 
                 COL_CURRENT
             ]
             final_cols = [c for c in display_cols if c in df_thinning.columns]
             
-            # Use style to highlight high risk in the dataframe if supported (Streamlit dataframe is limited in styling, but showing the number helps)
+            # Create a clean display copy
+            df_display = df_thinning[final_cols].copy()
+            
+            # --- ROUNDING LOGIC (Max 4 Decimals) ---
+            # We specifically target the float columns that tend to have long decimals
+            cols_to_round = ['Predicted_Growth', 'Competition_Index']
+            for c in cols_to_round:
+                if c in df_display.columns:
+                    df_display[c] = df_display[c].round(4)
+            
             st.dataframe(
-                df_thinning[final_cols].style.background_gradient(subset=['Mortality Risk (%)'], cmap='Reds'),
+                df_display, 
                 use_container_width=True, 
                 height=300
             )
