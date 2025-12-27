@@ -1,47 +1,73 @@
 # ForestManager_app.py
 import streamlit as st
 from src.utils import load_and_process_data, load_model_resources, run_predictions
-from src.config import DATA_FILENAME
+from src.config import DATA_FILENAME, DEFAULT_MIN_DBH
 
-# 1. GLOBAL CONFIGURATION (Must be the first Streamlit command)
+# 1. GLOBAL CONFIGURATION (Must be first)
 st.set_page_config(page_title="ForestManager", layout="wide")
 
-# 2. GLOBAL DATA LOADING
-# We load data here so it is available for ALL pages immediately
-with st.spinner('Initializing ForestManager System...'):
-    if 'df' not in st.session_state:
-        df = load_and_process_data(DATA_FILENAME)
-        model, encoder = load_model_resources()
-        
-        if df is not None and model is not None:
-            if 'Predicted_Growth' not in df.columns:
-                df = run_predictions(df, model, encoder)
-            
-            st.session_state['df'] = df
-            st.session_state['model_loaded'] = True
-        else:
-            st.session_state['model_loaded'] = False
+# ==========================================
+# 2. SIDEBAR (Global Controls)
+# ==========================================
+with st.sidebar:
+    st.header("⚙️ Global Settings")
+    st.info("These settings control the data loaded for the entire application.")
+    
+    # Global Filter: Minimum Tree Size
+    min_dbh_input = st.slider(
+        "Min. Tree Size (DBH cm):", 
+        min_value=1.0, 
+        max_value=20.0, 
+        value=DEFAULT_MIN_DBH,
+        step=0.5,
+        help="Trees smaller than this are removed from the analysis to focus on established stock and prevent skewing competition metrics."
+    )
 
 # ==========================================
-# 3. DEFINE LANDING PAGE CONTENT
+# 3. DATA LOADING & PREDICTION
+# ==========================================
+# Load Data (Cached based on min_dbh_input)
+df = load_and_process_data(DATA_FILENAME, min_dbh_input)
+
+# Load Models
+model_grow, model_mort, encoder = load_model_resources()
+
+# Run AI Predictions if needed
+if df is not None and model_grow is not None:
+    # Check if we've already run predictions for this session
+    if 'Predicted_Growth' not in df.columns:
+        with st.spinner("Running AI Analysis (Growth & Mortality)..."):
+            df = run_predictions(df, model_grow, model_mort, encoder)
+    
+    # Save to session state
+    st.session_state['df'] = df
+    st.session_state['model_loaded'] = True
+else:
+    st.session_state['model_loaded'] = False
+
+# ==========================================
+# 4. LANDING PAGE CONTENT
 # ==========================================
 def landing_page():
     st.title("🌲 ForestManager")
-    st.subheader("Forest Thinning Decision Support System")
+    st.subheader("Intelligent Silvicultural Decision Support System")
     st.markdown("---")
 
     col1, col2 = st.columns([3, 2])
 
     with col1:
         st.markdown("### 👋 Welcome")
+        # Dynamic stats based on the slider
+        tree_count = len(df) if df is not None else 0
+        
         st.markdown(
-            """
+            f"""
             **ForestManager** is an AI-powered tool designed to assist foresters in optimizing 
             forest health through data-driven **silvicultural thinning**. 
             
-            By analyzing historical growth patterns, spatial density, and competition indices, 
-            this application helps identify which trees are struggling and where thinning 
-            could benefit the overall stand.
+            **Current Data Status:**
+            * **Trees Loaded:** {tree_count:,}
+            * **Min DBH Filter:** {min_dbh_input} cm
             """
         )
         
@@ -51,14 +77,10 @@ def landing_page():
             1.  **Configure (Dashboard)**: Select your forest quadrants and species of interest.
             2.  **Simulate**: Adjust the *Growth Percentile* and *Competition Index* sliders to define your thinning strategy.
             3.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact on the forest structure.
-            4.  **Analyze (Individual Growth)**: Drill down into specific trees to view their historical performance and predicted future growth.
+            4.  **Analyze (Individual Growth)**: Drill down into specific trees to view their historical performance, **Mortality Risk**, and predicted future growth.
             """
         )
 
-        st.info("💡 **Tip:** Start by filtering for the bottom 25% of growth and high competition to find the most stressed trees.")
-
-        # Navigation Button (Updated to use st.switch_page with Page Object if needed, 
-        # but string path usually works if defined in navigation)
         st.write("")
         if st.session_state.get('model_loaded'):
             if st.button("🏁 Start Analysis (Go to Dashboard)", type="primary", use_container_width=True):
@@ -87,29 +109,34 @@ def landing_page():
                 * **Low CI:** The tree is dominant or isolated (Low Stress).
                 """
             )
+            
+        with st.expander("💀 Mortality Risk", expanded=True):
+            st.write(
+                """
+                The probability (0-100%) that a tree will die in the next cycle based on its current competition and slow growth.
+                * **High Risk (>50%):** Immediate attention needed.
+                """
+            )
 
     st.markdown("---")
     st.caption("ForestManager FYP v2.0 | Powered by Random Forest Regression & Streamlit")
 
 # ==========================================
-# 4. NAVIGATION SETUP (The Refactor)
+# 5. NAVIGATION SETUP
 # ==========================================
-# This is where you rename the pages in the sidebar WITHOUT renaming files!
-
 pages = [
-    # Page 1: The Landing Page (defined as a function above)
+    # Page 1: Landing Page
     st.Page(landing_page, title="Home", icon="🏠"),
     
-    # Page 2: Dashboard (Renamed from '0_Dashboard.py' to 'Analysis Dashboard')
+    # Page 2: Dashboard
     st.Page("pages/0_Dashboard.py", title="Analysis Dashboard", icon="📊"),
     
-    # Page 3: Spatial Map (Renamed from '1_Spatial_Map.py' to '3D Forest Map')
+    # Page 3: Map
     st.Page("pages/1_Spatial_Map.py", title="3D Forest Map", icon="🗺️"),
     
-    # Page 4: Growth (Renamed from '2_Individual_Growth.py' to 'Growth Trends')
+    # Page 4: Individual Growth
     st.Page("pages/2_Individual_Growth.py", title="Growth Trends", icon="📈"),
 ]
 
-# Run the navigation
 pg = st.navigation(pages)
 pg.run()
