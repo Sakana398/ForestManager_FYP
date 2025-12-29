@@ -4,204 +4,169 @@ import pandas as pd
 import altair as alt
 from src.config import *
 import numpy as np
+import joblib
 
 st.set_page_config(page_title="ForestManager | Growth Analysis", layout="wide")
 
 st.title("📈 Individual Tree Growth Analysis")
 
+# Load Models specifically for simulation
+@st.cache_resource
+def get_model():
+    return joblib.load(MODEL_FILENAME)
+
+model = get_model()
+
 if 'df' in st.session_state:
     df = st.session_state['df']
     
-    # ==========================================
     # 1. SELECT TREE
-    # ==========================================
     col_sel1, col_sel2 = st.columns([1, 2])
-    
     with col_sel1:
-        # Search box for Tree ID
         all_tags = sorted(df[COL_ID].unique())
-        
-        # Optional: Species Filter
         if COL_SPECIES in df.columns:
             all_species = sorted(df[COL_SPECIES].unique())
-            sel_species = st.selectbox("Filter by Species (Optional):", ["All"] + all_species)
-            
+            sel_species = st.selectbox("Filter Species:", ["All"] + all_species)
             if sel_species != "All":
                 filtered_tags = sorted(df[df[COL_SPECIES] == sel_species][COL_ID].unique())
             else:
                 filtered_tags = all_tags
         else:
             filtered_tags = all_tags
-            
         selected_tag = st.selectbox("Select Tree Tag:", filtered_tags)
 
-    # ==========================================
-    # 2. PREPARE DATA FOR CHART
-    # ==========================================
+    # 2. PREPARE DATA
     tree_data = df[df[COL_ID] == selected_tag].iloc[0]
     
-    # Define timeline mapping
-    timeline_map = {
-        2000: COL_HISTORY, 
-        2005: COL_CURRENT, 
-        2010: COL_TARGET
-    }
-    
-    # 1. Build Historical Data (Green Line)
-    history_points = []
+    # --- A. Historical Data (Extended Timeline) ---
+    # Loops through 1995, 2000, 2005, 2010
+    chart_points = []
     last_measured_year = None
     last_measured_val = None
     
-    for year, col_name in timeline_map.items():
+    for year, col_name in sorted(COL_YEARS.items()):
         if col_name in df.columns:
             val = tree_data[col_name]
-            # Handle NaN or 0 values gracefully
             if pd.notna(val) and val > 0:
-                history_points.append({"Year": year, "DBH": val, "Type": "Measured"})
+                chart_points.append({"Year": year, "DBH": val, "Type": "Measured"})
                 last_measured_year = year
                 last_measured_val = val
 
-    df_history = pd.DataFrame(history_points)
-
-    # 2. Build Predicted Data (Red Line)
-    prediction_points = []
+    # --- B. Simulation Logic ---
+    st.markdown("### 🔮 Prediction Scenarios")
     
-    if 'Predicted_Size' in tree_data and pd.notna(tree_data['Predicted_Size']):
+    col_sim1, col_sim2 = st.columns([1, 2])
+    with col_sim1:
+        simulate_thinning = st.toggle("Simulate Thinning Effect", value=False, 
+            help="Predicts how this tree would grow if we reduced competition by 50%.")
+    
+    # 1. Standard Prediction (Status Quo)
+    predictions = []
+    if 'Predicted_Size' in tree_data:
         pred_val = tree_data['Predicted_Size']
-        pred_year = 2015 
+        predictions.append({"Year": 2015, "DBH": pred_val, "Type": "Predicted (Status Quo)"})
+    
+    # 2. Thinned Prediction (Comparison)
+    if simulate_thinning and model:
+        # Create a synthetic feature row with reduced Competition
+        features = [COL_CURRENT, 'GROWTH_HIST', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
         
-        if last_measured_year is not None:
-            # Anchor point (Start of Red Line)
-            prediction_points.append({"Year": last_measured_year, "DBH": last_measured_val, "Type": "Predicted"})
-            # Future point (End of Red Line)
-            prediction_points.append({"Year": pred_year, "DBH": pred_val, "Type": "Predicted"})
+        # Check if we have all needed features
+        if all(f in tree_data for f in features):
+            row_vals = tree_data[features].copy()
             
-    df_pred = pd.DataFrame(prediction_points)
+            # --- THE SIMULATION ---
+            # Reduce Competition Index by 50% (Simulating neighbor removal)
+            row_vals['Competition_Index'] = row_vals['Competition_Index'] * 0.5 
+            
+            # Predict
+            pred_thin_val = model.predict(pd.DataFrame([row_vals]))[0]
+            # Ensure no shrinking
+            pred_thin_val = max(pred_thin_val, tree_data[COL_CURRENT])
+            
+            predictions.append({"Year": 2015, "DBH": pred_thin_val, "Type": "Predicted (After Thinning)"})
+            
+            improvement = pred_thin_val - tree_data['Predicted_Size']
+            if improvement > 0:
+                st.success(f"📉 Removing competition could add **+{improvement:.2f} cm** to growth!")
 
-    # ==========================================
-    # 3. VISUALIZATION
-    # ==========================================
+    # Combine Data for Plotting
+    # We add the anchor point (last measured) to connect lines
+    plot_data = pd.DataFrame(chart_points)
+    
+    pred_lines = []
+    if last_measured_year:
+        for p in predictions:
+            # Add start point (2010) and end point (2015) for each line
+            line_data = [
+                {"Year": last_measured_year, "DBH": last_measured_val, "Type": p["Type"]},
+                p
+            ]
+            pred_lines.append(pd.DataFrame(line_data))
+
+    # --- C. Visualization ---
     col_viz, col_stats = st.columns([2, 1])
     
     with col_viz:
-        if not df_history.empty:
-            # Layer A: Historical Line (Green)
-            chart_hist = alt.Chart(df_history).mark_line(
-                point=True, 
-                color='#2e7d32', 
-                strokeWidth=3
-            ).encode(
+        if not plot_data.empty:
+            # 1. Measured History (Solid Line)
+            base = alt.Chart(plot_data).mark_line(point=True, strokeWidth=3).encode(
                 x=alt.X('Year:O', axis=alt.Axis(title="Year")),
                 y=alt.Y('DBH', scale=alt.Scale(zero=False), axis=alt.Axis(title="Diameter (cm)")),
+                color=alt.value("#2e7d32"), # Green
                 tooltip=['Year', 'DBH', 'Type']
             )
             
-            # Layer B: Predicted Line (Red)
-            if not df_pred.empty:
-                chart_pred = alt.Chart(df_pred).mark_line(
-                    point=True, 
-                    color='#d32f2f', 
-                    strokeDash=[5, 5], 
-                    strokeWidth=3
+            final_chart = base
+            
+            # 2. Add Prediction Lines (Dashed)
+            colors = {"Predicted (Status Quo)": "#d32f2f", "Predicted (After Thinning)": "#1976d2"}
+            
+            for i, line_df in enumerate(pred_lines):
+                line_type = line_df.iloc[1]['Type']
+                c = colors.get(line_type, "grey")
+                
+                pred_layer = alt.Chart(line_df).mark_line(
+                    point=True, strokeDash=[5, 5], strokeWidth=3
                 ).encode(
-                    x=alt.X('Year:O'),
-                    y=alt.Y('DBH'),
+                    x='Year:O', y='DBH',
+                    color=alt.value(c),
                     tooltip=['Year', 'DBH', 'Type']
                 )
-                
-                final_chart = (chart_hist + chart_pred).properties(
-                    title=f"Growth Progression: Tree #{selected_tag}",
-                    height=400
-                )
-            else:
-                final_chart = chart_hist.properties(title=f"Growth History: Tree #{selected_tag}")
+                final_chart += pred_layer
 
-            st.altair_chart(final_chart, use_container_width=True)
-            st.caption("🟢 **Solid Green Line:** Historical Measurement | 🔴 **Dashed Red Line:** AI Prediction")
+            st.altair_chart(final_chart.properties(height=400, title=f"Growth Trajectory: Tree #{selected_tag}"), use_container_width=True)
             
-        else:
-            st.warning("No historical data available for this tree.")
+            # Custom Legend
+            st.caption("""
+            **Legend:** <span style='color:#2e7d32'><b>———</b> Measured History</span> &nbsp;|&nbsp; 
+            <span style='color:#d32f2f'><b>- - -</b> Status Quo Prediction</span> &nbsp;|&nbsp; 
+            <span style='color:#1976d2'><b>- - -</b> Simulated Thinning</span>
+            """, unsafe_allow_html=True)
 
-    # ==========================================
-    # 4. TREE STATISTICS (RIGHT PANEL)
-    # ==========================================
+    # --- D. Stats Panel ---
     with col_stats:
-        st.subheader("Tree Details")
-        st.write(f"**Species:** {tree_data.get(COL_SPECIES, 'Unknown')}")
-        if COL_SPECIES_GRP in df.columns:
-            st.write(f"**Group:** {tree_data.get(COL_SPECIES_GRP, '-')}")
-            
-        st.divider()
+        st.subheader("Tree Statistics")
+        st.info(f"Species: **{tree_data.get(COL_SPECIES, 'Unknown')}**")
         
-        # --- MORTALITY RISK SECTION (NEW) ---
+        # Risk Meter
         if 'Mortality_Risk' in tree_data:
-            risk_val = tree_data['Mortality_Risk'] # Float 0.0 to 1.0
-            risk_pct = risk_val * 100
-            
-            # Logic for Labels and Colors
-            if risk_pct > 50:
-                risk_label = "⚠️ High Risk"
-                delta_color = "inverse" # Red in Streamlit logic for 'normal' delta
-                bar_color = "red"
-            elif risk_pct > 20:
-                risk_label = "Moderate Risk"
-                delta_color = "off"
-                bar_color = "yellow"
-            else:
-                risk_label = "Low Risk (Healthy)"
-                delta_color = "normal" # Green
-                bar_color = "green"
+            risk = tree_data['Mortality_Risk'] * 100
+            color = "red" if risk > 50 else ("orange" if risk > 20 else "green")
+            st.metric("Mortality Risk", f"{risk:.1f}%", delta="High" if risk > 50 else "Low", delta_color="inverse")
+            st.progress(int(100 - risk))
+            st.caption(f"Survival Probability: {100-risk:.1f}%")
 
-            st.metric(
-                "Mortality Risk", 
-                f"{risk_pct:.1f}%", 
-                delta=risk_label,
-                delta_color=delta_color
-            )
-            
-            # Visual Progress Bar for Survival (Inverse of Risk)
-            st.write("Survival Probability:")
-            st.progress(int(100 - risk_pct))
-            
         st.divider()
+        st.write("**Measurements:**")
+        for p in chart_points:
+            st.text(f"{p['Year']}: {p['DBH']:.2f} cm")
 
-        # Growth & Competition Metrics
-        if 'Predicted_Growth' in tree_data:
-            pg = tree_data['Predicted_Growth']
-            st.metric(
-                "Predicted Growth (5yr)", 
-                f"{pg:.2f} cm",
-                help="Projected diameter increase over the next 5 years."
-            )
-            
-        if 'Competition_Index' in tree_data:
-            ci = tree_data['Competition_Index']
-            st.metric(
-                "Competition Index", 
-                f"{ci:.2f}",
-                help="Higher index means more stress from neighbors."
-            )
-
-        # Raw Data Table
-        with st.expander("View Raw Data Points"):
-            display_rows = history_points + [p for p in prediction_points if p['Year'] == 2015]
-            for row in display_rows:
-                icon = "🔮" if row['Type'] == "Predicted" else "📏"
-                st.text(f"{icon} {row['Year']}: {row['DBH']:.2f} cm")
-
-    # ==========================================
-    # 5. NAVIGATION
-    # ==========================================
+    # Navigation
     st.markdown("---")
-    col_nav1, col_nav3 = st.columns([1, 1])
-    with col_nav1:
-        if st.button("⬅️ Back to Map"):
-            st.switch_page("pages/1_Spatial_Map.py")
-    with col_nav3:
-        if st.button("Back to Dashboard 🏠"):
-            st.switch_page("pages/0_Dashboard.py")
+    c1, c2 = st.columns([1,1])
+    if c1.button("⬅️ Back to Map"): st.switch_page("pages/1_Spatial_Map.py")
+    if c2.button("Back to Dashboard 🏠"): st.switch_page("pages/0_Dashboard.py")
 
 else:
-    st.warning("⚠️ Data not loaded. Please go to the **Home** page first.")
-    if st.button("Go to Home"):
-        st.switch_page("ForestManager_app.py")
+    st.warning("⚠️ Data not loaded.")

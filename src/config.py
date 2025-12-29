@@ -5,29 +5,36 @@ import os
 DATA_FILENAME = "Data_DBH_50_hec.csv"
 
 # Column Definitions
-COL_ID = 'TAG' # Unique Tree Identifier
-COL_SPECIES = 'SP' # Species Code
-COL_SPECIES_GRP = 'Species Group' # Species Grouping
-COL_X = 'XCO' # X Coordinate
-COL_Y = 'YCO' # Y Coordinate
+COL_ID = 'TAG'
+COL_SPECIES = 'SP'
+COL_SPECIES_GRP = 'Species Group'
+COL_X = 'XCO'
+COL_Y = 'YCO'   # Column for X Coordinate
 
-# Time-Step Logic
-COL_CURRENT = 'D05'   # 2005
-COL_HISTORY = 'D00'   # 2000
-COL_TARGET  = 'D10'   # 2010
+# Time-Step Logic (Extended for Trend Analysis)
+# We map the CSV columns to Years
+COL_YEARS = {
+    1995: 'D95',  # Added for longer history
+    2000: 'D00', # Historical Baseline
+    2005: 'D05',  # Current State
+    2010: 'D10'   # Target/Validation
+}
+
+COL_CURRENT = 'D05'   
+COL_HISTORY = 'D00'   
+COL_TARGET  = 'D10'   
 
 # Settings
-DEFAULT_MIN_DBH = 5.0 # Minimum Diameter at Breast Height (cm)
+DEFAULT_MIN_DBH = 5.0 
 
 # Model Artifacts
-MODEL_FILENAME = "forest_growth_model.pkl"       # Regression (Size)
-MORTALITY_MODEL_FILENAME = "forest_mortality_model.pkl" # Classification (Mortality)
-ENCODER_FILENAME = "species_encoder.pkl" # Species One-Hot Encoder
+MODEL_FILENAME = "forest_growth_model.pkl"       
+MORTALITY_MODEL_FILENAME = "forest_mortality_model.pkl" 
+ENCODER_FILENAME = "species_encoder.pkl"
 
 # Parameters
-DENSITY_RADIUS = 5.0 # in meters
-COMPETITION_RADIUS = 6.0 # in meters
-TEST_SIZE = 0.2 # Proportion of data for testing
-RANDOM_STATE = 42 # For reproducibility
-DEFAULT_GROWTH_PERCENTILE = 25 # Default percentile for growth threshold
-DEFAULT_COMPETITION_INDEX = 0.5 # Default competition index threshold
+DENSITY_RADIUS = 5.0
+COMPETITION_RADIUS = 6.0
+TEST_SIZE = 0.2
+RANDOM_STATE = 42
+DEFAULT_GROWTH_PERCENTILE = 25

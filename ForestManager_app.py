@@ -91,7 +91,7 @@ def landing_page():
     with col2:
         st.markdown("### 🧠 Understanding the Metrics")
         
-        with st.expander("📉 Predicted Growth Percentile", expanded=True):
+        with st.expander("📉 Predicted Growth Percentile", expanded=False):
             st.write(
                 """
                 The AI model predicts the diameter growth of every tree for the next cycle. 
@@ -100,7 +100,7 @@ def landing_page():
                 """
             )
 
-        with st.expander("⚔️ Hegyi's Competition Index (CI)", expanded=True):
+        with st.expander("⚔️ Hegyi's Competition Index (CI)", expanded=False):
             st.write(
                 """
                 This index measures the stress a tree is under from its neighbors.
@@ -110,7 +110,7 @@ def landing_page():
                 """
             )
             
-        with st.expander("💀 Mortality Risk", expanded=True):
+        with st.expander("💀 Mortality Risk", expanded=False):
             st.write(
                 """
                 The probability (0-100%) that a tree will die in the next cycle based on its current competition and slow growth.
@@ -118,8 +118,8 @@ def landing_page():
                 """
             )
 
-    st.markdown("---")
-    st.caption("ForestManager FYP v2.0 | Powered by Random Forest Regression & Streamlit")
+    st.markdown("---") 
+    st.caption("ForestManager FYP v2.0 | Powered by Random Forest Regression & Streamlit") # Footer
 
 # ==========================================
 # 5. NAVIGATION SETUP
