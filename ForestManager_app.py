@@ -14,13 +14,15 @@ with st.sidebar:
     st.info("These settings control the data loaded for the entire application.")
     
     # Global Filter: Minimum Tree Size
+    # ADDED KEY HERE TO PERSIST STATE
     min_dbh_input = st.slider(
         "Min. Tree Size (DBH cm):", 
         min_value=1.0, 
         max_value=20.0, 
         value=DEFAULT_MIN_DBH,
         step=0.5,
-        help="Trees smaller than this are removed from the analysis to focus on established stock and prevent skewing competition metrics."
+        key="global_min_dbh", 
+        help="Trees smaller than this are removed from the analysis to focus on established stock."
     )
 
 # ==========================================
@@ -74,7 +76,7 @@ def landing_page():
         st.markdown("### 🚀 How to Use This App")
         st.markdown(
             """
-            1.  **Configure (Dashboard)**: Select your forest quadrants and species of interest.
+            1.  **Configure (Dashboard)**: Select your Species Group(s) and Species of Interest.
             2.  **Simulate**: Adjust the *Growth Percentile* and *Competition Index* sliders to define your thinning strategy.
             3.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact on the forest structure.
             4.  **Analyze (Individual Growth)**: Drill down into specific trees to view their historical performance, **Mortality Risk**, and predicted future growth.
@@ -91,6 +93,7 @@ def landing_page():
     with col2:
         st.markdown("### 🧠 Understanding the Metrics")
         
+        # CHANGED: expanded=False to keep closed on startup
         with st.expander("📉 Predicted Growth Percentile", expanded=False):
             st.write(
                 """
@@ -118,23 +121,16 @@ def landing_page():
                 """
             )
 
-    st.markdown("---") 
-    st.caption("ForestManager FYP v2.0 | Powered by Random Forest Regression & Streamlit") # Footer
+    st.markdown("---")
+    st.caption("ForestManager FYP v2.0 | Powered by Random Forest Regression & Streamlit")
 
 # ==========================================
 # 5. NAVIGATION SETUP
 # ==========================================
 pages = [
-    # Page 1: Landing Page
     st.Page(landing_page, title="Home", icon="🏠"),
-    
-    # Page 2: Dashboard
     st.Page("pages/0_Dashboard.py", title="Analysis Dashboard", icon="📊"),
-    
-    # Page 3: Map
     st.Page("pages/1_Spatial_Map.py", title="3D Forest Map", icon="🗺️"),
-    
-    # Page 4: Individual Growth
     st.Page("pages/2_Individual_Growth.py", title="Growth Trends", icon="📈"),
 ]
 
