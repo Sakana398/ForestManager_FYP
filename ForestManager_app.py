@@ -1,5 +1,7 @@
 # ForestManager_app.py
 import streamlit as st
+import pandas as pd
+import pydeck as pdk  # <--- Added PyDeck for advanced map features
 from src.utils import load_and_process_data, load_model_resources, run_predictions
 from src.config import DATA_FILENAME, DEFAULT_MIN_DBH
 
@@ -14,15 +16,14 @@ with st.sidebar:
     st.info("These settings control the data loaded for the entire application.")
     
     # Global Filter: Minimum Tree Size
-    # ADDED KEY HERE TO PERSIST STATE
     min_dbh_input = st.slider(
         "Min. Tree Size (DBH cm):", 
         min_value=1.0, 
         max_value=20.0, 
         value=DEFAULT_MIN_DBH,
         step=0.5,
-        key="global_min_dbh", 
-        help="Trees smaller than this are removed from the analysis to focus on established stock."
+        key="global_min_dbh",
+        help="Trees smaller than this are removed from the analysis to focus on established stock and prevent skewing competition metrics."
     )
 
 # ==========================================
@@ -76,7 +77,7 @@ def landing_page():
         st.markdown("### 🚀 How to Use This App")
         st.markdown(
             """
-            1.  **Configure (Dashboard)**: Select your Species Group(s) and Species of Interest.
+            1.  **Configure (Dashboard)**: Select your forest quadrants and species of interest.
             2.  **Simulate**: Adjust the *Growth Percentile* and *Competition Index* sliders to define your thinning strategy.
             3.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact on the forest structure.
             4.  **Analyze (Individual Growth)**: Drill down into specific trees to view their historical performance, **Mortality Risk**, and predicted future growth.
@@ -93,7 +94,6 @@ def landing_page():
     with col2:
         st.markdown("### 🧠 Understanding the Metrics")
         
-        # CHANGED: expanded=False to keep closed on startup
         with st.expander("📉 Predicted Growth Percentile", expanded=False):
             st.write(
                 """
@@ -121,8 +121,76 @@ def landing_page():
                 """
             )
 
+    # --- LOCATION MAP SECTION (UPDATED FOR RED PIN) ---
     st.markdown("---")
-    st.caption("ForestManager FYP v2.0 | Powered by Random Forest Regression & Streamlit")
+    st.subheader("📍 Study Site Location")
+    
+    col_map_desc, col_map_view = st.columns([1, 3])
+    
+    with col_map_desc:
+        st.info(
+            """
+            **Pasoh Forest Reserve**
+            
+            *Negeri Sembilan, Malaysia*
+            
+            A 50-hectare research plot managed by FRIM. This lowland dipterocarp forest serves as the primary dataset for our AI models.
+            """
+        )
+    
+    with col_map_view:
+        # 1. Define Data
+        # Using a stable public URL for a "Red Pin" icon
+        ICON_URL = "https://img.icons8.com/plasticine/100/000000/marker.png"
+
+        icon_data = {
+            "url": ICON_URL,
+            "width": 128,
+            "height": 128,
+            "anchorY": 128 # Anchors the tip of the pin to the location
+        }
+
+        pasoh_coords = pd.DataFrame({
+            'lat': [2.982],
+            'lon': [102.313],
+            'name': ["Pasoh Forest Reserve"],
+            'icon_data': [icon_data] # Pass the icon dict here
+        })
+
+        # 2. Define Layer
+        icon_layer = pdk.Layer(
+            type="IconLayer",
+            data=pasoh_coords,
+            get_icon="icon_data",
+            get_size=4,
+            size_scale=15,
+            get_position='[lon, lat]',
+            pickable=True
+        )
+
+        # 3. View State (Center on Pasoh)
+        view_state = pdk.ViewState(
+            latitude=2.982,
+            longitude=102.313,
+            zoom=11,
+            pitch=0
+        )
+        
+        # 4. Tooltip
+        tooltip = {"html": "<b>{name}</b>", "style": {"backgroundColor": "steelblue", "color": "white"}}
+
+        # 5. Render
+        st.pydeck_chart(
+            pdk.Deck(
+                map_style='mapbox://styles/mapbox/outdoors-v11', # Outdoors style looks great for forests
+                initial_view_state=view_state,
+                layers=[icon_layer],
+                tooltip=tooltip
+            )
+        )
+
+    st.markdown("---")
+    st.caption("ForestManager FYP v2.0 | Powered by XGBoost & Streamlit")
 
 # ==========================================
 # 5. NAVIGATION SETUP
