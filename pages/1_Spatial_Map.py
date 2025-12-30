@@ -137,7 +137,7 @@ if 'df' in st.session_state and 'df_thinning_recs' in st.session_state:
         view_state = pdk.ViewState(
             longitude=df_view['lon_viz'].mean(),
             latitude=df_view['lat_viz'].mean(),
-            zoom=16,
+            zoom=18,
             pitch=60,
             bearing=0
         )

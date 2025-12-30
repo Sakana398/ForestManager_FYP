@@ -131,7 +131,7 @@ def landing_page():
             
             *Negeri Sembilan, Malaysia*
             
-            A 50-hectare research plot managed by FRIM. This lowland dipterocarp forest serves as the primary dataset for our AI models.
+            A 50-hectare research plot managed by FRIM. This lowland dipterocarp forest serves as the primary dataset for this model.
             """
         )
     
