@@ -1,7 +1,7 @@
 # ForestManager_app.py
 import streamlit as st
 import pandas as pd
-import pydeck as pdk  # <--- Added PyDeck for advanced map features
+import pydeck as pdk
 from src.utils import load_and_process_data, load_model_resources, run_predictions
 from src.config import DATA_FILENAME, DEFAULT_MIN_DBH
 
@@ -37,12 +37,10 @@ model_grow, model_mort, encoder = load_model_resources()
 
 # Run AI Predictions if needed
 if df is not None and model_grow is not None:
-    # Check if we've already run predictions for this session
     if 'Predicted_Growth' not in df.columns:
         with st.spinner("Running AI Analysis (Growth & Mortality)..."):
             df = run_predictions(df, model_grow, model_mort, encoder)
     
-    # Save to session state
     st.session_state['df'] = df
     st.session_state['model_loaded'] = True
 else:
@@ -60,7 +58,6 @@ def landing_page():
 
     with col1:
         st.markdown("### 👋 Welcome")
-        # Dynamic stats based on the slider
         tree_count = len(df) if df is not None else 0
         
         st.markdown(
@@ -77,7 +74,7 @@ def landing_page():
         st.markdown("### 🚀 How to Use This App")
         st.markdown(
             """
-            1.  **Configure (Dashboard)**: Select your forest quadrants and species of interest.
+            1.  **Configure (Dashboard)**: Select the species group(s) and species of interest.
             2.  **Simulate**: Adjust the *Growth Percentile* and *Competition Index* sliders to define your thinning strategy.
             3.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact on the forest structure.
             4.  **Analyze (Individual Growth)**: Drill down into specific trees to view their historical performance, **Mortality Risk**, and predicted future growth.
@@ -121,7 +118,7 @@ def landing_page():
                 """
             )
 
-    # --- LOCATION MAP SECTION (UPDATED FOR RED PIN) ---
+    # --- LOCATION MAP SECTION ---
     st.markdown("---")
     st.subheader("📍 Study Site Location")
     
@@ -139,22 +136,21 @@ def landing_page():
         )
     
     with col_map_view:
-        # 1. Define Data
-        # Using a stable public URL for a "Red Pin" icon
+        # 1. Define Data (Single Point)
         ICON_URL = "https://img.icons8.com/plasticine/100/000000/marker.png"
 
         icon_data = {
             "url": ICON_URL,
             "width": 128,
             "height": 128,
-            "anchorY": 128 # Anchors the tip of the pin to the location
+            "anchorY": 128
         }
 
         pasoh_coords = pd.DataFrame({
             'lat': [2.982],
             'lon': [102.313],
             'name': ["Pasoh Forest Reserve"],
-            'icon_data': [icon_data] # Pass the icon dict here
+            'icon_data': [icon_data]
         })
 
         # 2. Define Layer
@@ -168,7 +164,7 @@ def landing_page():
             pickable=True
         )
 
-        # 3. View State (Center on Pasoh)
+        # 3. View State
         view_state = pdk.ViewState(
             latitude=2.982,
             longitude=102.313,
@@ -179,10 +175,10 @@ def landing_page():
         # 4. Tooltip
         tooltip = {"html": "<b>{name}</b>", "style": {"backgroundColor": "steelblue", "color": "white"}}
 
-        # 5. Render
+        # 5. Render (FIXED: map_style=None uses Streamlit default, preventing errors)
         st.pydeck_chart(
             pdk.Deck(
-                map_style='mapbox://styles/mapbox/outdoors-v11', # Outdoors style looks great for forests
+                map_style=None,  # <--- CHANGED FROM 'mapbox://...' TO None
                 initial_view_state=view_state,
                 layers=[icon_layer],
                 tooltip=tooltip

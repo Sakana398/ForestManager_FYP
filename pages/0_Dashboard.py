@@ -29,9 +29,8 @@ if 'df' in st.session_state:
             if COL_SPECIES_GRP in df.columns:
                 all_groups = sorted(df[COL_SPECIES_GRP].dropna().unique())
                 
-                # Load saved state or default to ALL
-                default_groups = st.session_state.get("saved_groups", all_groups)
-                # Ensure defaults are still valid (in case data changed)
+                # CHANGED: Default is now empty list [] instead of all_groups
+                default_groups = st.session_state.get("saved_groups", [])
                 default_groups = [g for g in default_groups if g in all_groups]
                 
                 selected_groups = st.multiselect(
@@ -47,7 +46,6 @@ if 'df' in st.session_state:
         # --- SPECIES ---
         with col_d2:
             if COL_SPECIES in df.columns:
-                # Filter available species based on group selection
                 if COL_SPECIES_GRP in df.columns and selected_groups:
                     available_species = df[df[COL_SPECIES_GRP].isin(selected_groups)][COL_SPECIES].unique()
                 else:
@@ -68,9 +66,8 @@ if 'df' in st.session_state:
                     selected_species = all_species
                     st.multiselect("Select Species:", all_species, default=all_species, disabled=True, key="sp_dis")
                 else:
-                    # Load saved species or default to first 5
-                    default_sp = st.session_state.get("saved_species", all_species[:5] if len(all_species) > 5 else all_species)
-                    # Validate defaults
+                    # CHANGED: Default is now empty list []
+                    default_sp = st.session_state.get("saved_species", [])
                     default_sp = [s for s in default_sp if s in all_species]
                     
                     selected_species = st.multiselect(
@@ -86,7 +83,6 @@ if 'df' in st.session_state:
         with col_d3:
             st.markdown("<br>", unsafe_allow_html=True) 
             if st.button("🔄 Reset Filters", use_container_width=True):
-                # Clear specific keys to reset defaults
                 for k in ["saved_groups", "saved_use_all", "saved_species", "saved_growth_pct", "saved_ci_limit"]:
                     if k in st.session_state:
                         del st.session_state[k]
@@ -95,7 +91,6 @@ if 'df' in st.session_state:
     with tab_rules:
         col_r1, col_r2 = st.columns(2)
         with col_r1:
-            # Load saved growth percent or default
             def_growth = st.session_state.get("saved_growth_pct", DEFAULT_GROWTH_PERCENTILE)
             growth_pct = st.slider(
                 "Remove trees growing slower than (Percentile):", 
@@ -106,9 +101,7 @@ if 'df' in st.session_state:
             
         with col_r2:
             max_ci = int(df['Competition_Index'].max()) if 'Competition_Index' in df.columns else 10
-            # Load saved CI or default
             def_ci = st.session_state.get("saved_ci_limit", 0)
-            # Clamp to max (in case data changed)
             def_ci = min(def_ci, max_ci)
             
             ci_limit = st.slider(
@@ -123,72 +116,81 @@ if 'df' in st.session_state:
     # ==========================================
     # 2. LOGIC (Apply Filters)
     # ==========================================
-    if COL_SPECIES_GRP in df.columns:
-        df_filtered = df[df[COL_SPECIES_GRP].isin(selected_groups)]
+    # Logic: If nothing is selected, we return empty so the dashboard starts blank
+    if not selected_groups and not selected_species and not use_all_species:
+        st.info("👈 Please select **Species Groups** or **Species** to begin analysis.")
+        st.session_state['df_thinning_recs'] = df.head(0) # Empty
     else:
-        df_filtered = df.copy()
-
-    df_filtered = df_filtered[df_filtered[COL_SPECIES].isin(selected_species)]
-    
-    if 'Predicted_Growth' in df_filtered.columns and not df_filtered.empty:
-        growth_thresh = df_filtered['Predicted_Growth'].quantile(growth_pct / 100.0)
-        
-        conditions = (
-            (df_filtered['Predicted_Growth'] <= growth_thresh) &
-            (df_filtered['Competition_Index'] >= ci_limit) 
-        )
-        
-        df_thinning = df_filtered[conditions].copy()
-        
-        # --- CALCULATE MORTALITY FOR DISPLAY ---
-        if 'Mortality_Risk' in df_thinning.columns:
-            df_thinning['Mortality Risk (%)'] = (df_thinning['Mortality_Risk'] * 100).round(1)
-            avg_risk = df_thinning['Mortality Risk (%)'].mean()
+        if COL_SPECIES_GRP in df.columns:
+            # If no group selected but species ARE selected (via all/manual), we don't filter by group
+            # But if group is selected, we filter by it.
+            if selected_groups:
+                df_filtered = df[df[COL_SPECIES_GRP].isin(selected_groups)]
+            else:
+                df_filtered = df.copy() # Allow searching by species across all groups if group is empty
         else:
-            df_thinning['Mortality Risk (%)'] = 0.0
-            avg_risk = 0.0
+            df_filtered = df.copy()
 
-        st.session_state['df_thinning_recs'] = df_thinning
-
-        # ==========================================
-        # 3. RESULTS
-        # ==========================================
-        st.subheader("📊 Simulation Results")
-        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        df_filtered = df_filtered[df_filtered[COL_SPECIES].isin(selected_species)]
         
-        m_col1.metric("Candidates for Removal", f"{len(df_thinning)} Trees")
-        m_col2.metric("Growth Cutoff", f"≤ {growth_thresh:.3f}")
-        m_col3.metric("Competition Floor", f"Index ≥ {ci_limit}")
-        
-        m_col4.metric(
-            "Avg. Mortality Risk", 
-            f"{avg_risk:.1f}%", 
-            delta="High Risk" if avg_risk > 50 else "Normal",
-            delta_color="inverse" if avg_risk > 50 else "normal"
-        )
+        if 'Predicted_Growth' in df_filtered.columns and not df_filtered.empty:
+            growth_thresh = df_filtered['Predicted_Growth'].quantile(growth_pct / 100.0)
+            
+            conditions = (
+                (df_filtered['Predicted_Growth'] <= growth_thresh) &
+                (df_filtered['Competition_Index'] >= ci_limit) 
+            )
+            
+            df_thinning = df_filtered[conditions].copy()
+            
+            # --- CALCULATE MORTALITY FOR DISPLAY ---
+            if 'Mortality_Risk' in df_thinning.columns:
+                df_thinning['Mortality Risk (%)'] = (df_thinning['Mortality_Risk'] * 100).round(1)
+                avg_risk = df_thinning['Mortality Risk (%)'].mean()
+            else:
+                df_thinning['Mortality Risk (%)'] = 0.0
+                avg_risk = 0.0
 
-        if not df_thinning.empty:
-            st.success(f"Strategy identified **{len(df_thinning)}** trees.")
-            
-            csv = df_thinning.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Download CSV", csv, 'thinning_candidates.csv', 'text/csv', type="primary")
-            
-            # --- TABLE DISPLAY ---
-            display_cols = [COL_ID, COL_SPECIES_GRP, COL_SPECIES, 'Predicted_Growth', 'Competition_Index', 'Mortality Risk (%)', COL_CURRENT]
-            final_cols = [c for c in display_cols if c in df_thinning.columns]
-            
-            # Rounding for clean display
-            df_disp = df_thinning[final_cols].copy()
-            for c in ['Predicted_Growth', 'Competition_Index']:
-                if c in df_disp.columns: df_disp[c] = df_disp[c].round(4)
+            st.session_state['df_thinning_recs'] = df_thinning
 
-            st.dataframe(df_disp, use_container_width=True, height=300)
+            # ==========================================
+            # 3. RESULTS
+            # ==========================================
+            st.subheader("📊 Simulation Results")
+            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+            
+            m_col1.metric("Candidates for Removal", f"{len(df_thinning)} Trees")
+            m_col2.metric("Growth Cutoff", f"≤ {growth_thresh:.3f}")
+            m_col3.metric("Competition Floor", f"Index ≥ {ci_limit}")
+            
+            m_col4.metric(
+                "Avg. Mortality Risk", 
+                f"{avg_risk:.1f}%", 
+                delta="High Risk" if avg_risk > 50 else "Normal",
+                delta_color="inverse" if avg_risk > 50 else "normal"
+            )
+
+            if not df_thinning.empty:
+                st.success(f"Strategy identified **{len(df_thinning)}** trees.")
+                
+                csv = df_thinning.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download CSV", csv, 'thinning_candidates.csv', 'text/csv', type="primary")
+                
+                # --- TABLE DISPLAY ---
+                display_cols = [COL_ID, COL_SPECIES_GRP, COL_SPECIES, 'Predicted_Growth', 'Competition_Index', 'Mortality Risk (%)', COL_CURRENT]
+                final_cols = [c for c in display_cols if c in df_thinning.columns]
+                
+                df_disp = df_thinning[final_cols].copy()
+                for c in ['Predicted_Growth', 'Competition_Index']:
+                    if c in df_disp.columns: df_disp[c] = df_disp[c].round(4)
+
+                st.dataframe(df_disp, use_container_width=True, height=300)
+            else:
+                st.warning("No trees match the current criteria.")
+                st.session_state['df_thinning_recs'] = df_filtered.head(0)
         else:
-            st.warning("No trees match the current criteria.")
-            st.session_state['df_thinning_recs'] = df_filtered.head(0)
-    else:
-        st.warning("No data found.")
-        st.session_state['df_thinning_recs'] = df.head(0)
+            st.warning("No data found for the selected species.")
+            st.session_state['df_thinning_recs'] = df.head(0)
 
     # Navigation
     st.markdown("---")
