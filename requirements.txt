@@ -5,3 +5,5 @@ joblib
 scipy
 altair
 numpy
+xgboost
+pydeck
