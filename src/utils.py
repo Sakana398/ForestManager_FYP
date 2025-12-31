@@ -33,7 +33,7 @@ def calculate_competition_index(df, radius_meters=COMPETITION_RADIUS):
     dbh = valid_trees[COL_CURRENT].values
     
     # 2. Convert Radius: Meters -> Degrees for the search
-    # 1 degree approx 111,111 meters. So 6m becomes ~0.000054 degrees
+    # 1 degree approx 111,111 meters.
     DEG_PER_METER = 1 / 111111.0
     radius_deg = radius_meters * DEG_PER_METER
     
@@ -51,7 +51,7 @@ def calculate_competition_index(df, radius_meters=COMPETITION_RADIUS):
             # Calculate raw distance in degrees
             dist_deg = np.linalg.norm(coords[i] - coords[n_idx])
             
-            # 4. CRITICAL FIX: Convert distance to Meters for the formula
+            # 4. Convert distance to Meters for the formula
             dist_m = dist_deg * 111111.0
             
             if dist_m > 0.1: # Avoid division by zero
@@ -82,7 +82,6 @@ def load_and_process_data(csv_path, min_dbh_limit=DEFAULT_MIN_DBH):
             df[COL_SPECIES_GRP] = df[COL_SPECIES_GRP].astype(str).str.strip()
         
         # Numeric Cleaning
-        # Important: Your coordinates are likely already valid, but check for 0s
         for c in [COL_HISTORY, COL_CURRENT, COL_TARGET]:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors='coerce')
@@ -97,16 +96,12 @@ def load_and_process_data(csv_path, min_dbh_limit=DEFAULT_MIN_DBH):
             df['GROWTH_HIST'] = df[COL_CURRENT] - hist_vals
 
         # Spatial Features
-        # Note: We calculate these using degrees, which is fine for relative ranking,
-        # but technically Density Radius should also be converted.
         spatial_df = df.dropna(subset=[COL_X, COL_Y, COL_CURRENT]).copy()
         
         if not spatial_df.empty:
             coords = spatial_df[[COL_X, COL_Y]].values
             tree = cKDTree(coords)
             
-            # Use same conversion for consistency if needed, but for now simple query is okay
-            # Note: 5 meters in degrees is approx 0.000045
             radius_deg = DENSITY_RADIUS * (1/111111.0)
             
             dists, _ = tree.query(coords, k=2)
@@ -141,12 +136,19 @@ def run_predictions(df, model_grow, model_mort, encoder):
     pred_df = pred_df[pred_df['SP_Encoded'] != -1]
     
     if not pred_df.empty:
-        predicted_future = model_grow.predict(pred_df)
-        corrected_future = np.maximum(predicted_future, pred_df[COL_CURRENT])
+        # 1. Growth (INCREMENT MODE)
+        predicted_increment = model_grow.predict(pred_df)
+        
+        # Calculate Future Size = Current + Increment
+        predicted_future = pred_df[COL_CURRENT] + predicted_increment
+        
+        # Safety: Tree shouldn't shrink below current size
+        corrected_future = np.maximum(predicted_future, pred_df[COL_CURRENT]) 
         
         df.loc[pred_df.index, 'Predicted_Size'] = corrected_future 
-        df.loc[pred_df.index, 'Predicted_Growth'] = corrected_future - pred_df[COL_CURRENT]
+        df.loc[pred_df.index, 'Predicted_Growth'] = predicted_increment # Store increment
         
+        # 2. Mortality
         if model_mort is not None:
             risk_probs = model_mort.predict_proba(pred_df)[:, 1] 
             df.loc[pred_df.index, 'Mortality_Risk'] = risk_probs

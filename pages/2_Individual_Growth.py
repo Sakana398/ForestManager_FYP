@@ -2,15 +2,15 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-from src.config import *
 import numpy as np
 import joblib
+from src.config import *
 
 st.set_page_config(page_title="ForestManager | Growth Analysis", layout="wide")
 
 st.title("📈 Individual Tree Growth Analysis")
 
-# Load Models specifically for simulation
+# Load Models
 @st.cache_resource
 def get_model():
     return joblib.load(MODEL_FILENAME)
@@ -20,9 +20,37 @@ model = get_model()
 if 'df' in st.session_state:
     df = st.session_state['df']
     
+    # Check Strategy State
+    if 'df_thinning_recs' in st.session_state and not st.session_state['df_thinning_recs'].empty:
+        # FORCE STRING IDs
+        thinning_ids = set(st.session_state['df_thinning_recs'][COL_ID].astype(str))
+        strategy_active = True
+        strategy_count = len(thinning_ids)
+    else:
+        thinning_ids = set()
+        strategy_active = False
+        strategy_count = 0
+
+    # ==========================================
     # 1. SELECT TREE
+    # ==========================================
     col_sel1, col_sel2 = st.columns([1, 2])
     with col_sel1:
+        # AUTO-FINDER BUTTON
+        if strategy_active:
+            if st.button("✨ Find Tree with Removable Neighbors"):
+                # Find tree NOT in removal list but has High Comp
+                candidates = df[
+                    (~df[COL_ID].astype(str).isin(thinning_ids)) & 
+                    (df['Competition_Index'] > 4)
+                ]
+                if not candidates.empty:
+                    best_tree = candidates.sample(1).iloc[0][COL_ID]
+                    st.session_state['selected_tree_id'] = best_tree
+                    st.rerun()
+                else:
+                    st.warning("No suitable candidate found.")
+
         all_tags = sorted(df[COL_ID].unique())
         if COL_SPECIES in df.columns:
             all_species = sorted(df[COL_SPECIES].unique())
@@ -33,13 +61,20 @@ if 'df' in st.session_state:
                 filtered_tags = all_tags
         else:
             filtered_tags = all_tags
-        selected_tag = st.selectbox("Select Tree Tag:", filtered_tags)
+            
+        idx = 0
+        if 'selected_tree_id' in st.session_state and st.session_state['selected_tree_id'] in filtered_tags:
+            idx = filtered_tags.index(st.session_state['selected_tree_id'])
+            
+        selected_tag = st.selectbox("Select Tree Tag:", filtered_tags, index=idx)
+        st.session_state['selected_tree_id'] = selected_tag
 
-    # 2. PREPARE DATA
+    # Get Data
     tree_data = df[df[COL_ID] == selected_tag].iloc[0]
-    
-    # --- A. Historical Data (Extended Timeline) ---
-    # Loops through 1995, 2000, 2005, 2010
+
+    # ==========================================
+    # 2. HISTORICAL DATA
+    # ==========================================
     chart_points = []
     last_measured_year = None
     last_measured_val = None
@@ -52,117 +87,152 @@ if 'df' in st.session_state:
                 last_measured_year = year
                 last_measured_val = val
 
-    # --- B. Simulation Logic ---
+    # ==========================================
+    # 3. THINNING SIMULATION
+    # ==========================================
     st.markdown("### 🔮 Prediction Scenarios")
     
     col_sim1, col_sim2 = st.columns([1, 2])
-    with col_sim1:
-        simulate_thinning = st.toggle("Simulate Thinning Effect", value=False, 
-            help="Predicts how this tree would grow if we reduced competition by 50%.")
     
-    # 1. Standard Prediction (Status Quo)
+    with col_sim1:
+        simulate_thinning = st.toggle(
+            "Apply Dashboard Thinning Strategy", 
+            value=False, 
+            disabled=not strategy_active,
+            help="Recalculates growth by physically removing neighbors marked in the Dashboard."
+        )
+        
+        if not strategy_active:
+            st.caption("⚠️ No thinning strategy selected on Dashboard.")
+        else:
+            st.caption(f"✅ Strategy Loaded: {strategy_count} trees marked for removal.")
+
+    # Base Prediction
     predictions = []
     if 'Predicted_Size' in tree_data:
         pred_val = tree_data['Predicted_Size']
         predictions.append({"Year": 2015, "DBH": pred_val, "Type": "Predicted (Status Quo)"})
     
-    # 2. Thinned Prediction (Comparison)
-    if simulate_thinning and model:
-        # Create a synthetic feature row with reduced Competition
+    # Simulation Vars
+    new_ci = tree_data['Competition_Index']
+    removed_neighbors = 0
+    total_neighbors = 0
+    
+    if simulate_thinning and model and strategy_active:
+        # A. Spatial Search
+        c_lat = tree_data[COL_Y]
+        c_lon = tree_data[COL_X]
+        radius_deg = COMPETITION_RADIUS * (1/111111.0)
+        
+        candidates_df = df[
+            (df[COL_X].between(c_lon - radius_deg*1.5, c_lon + radius_deg*1.5)) & 
+            (df[COL_Y].between(c_lat - radius_deg*1.5, c_lat + radius_deg*1.5)) &
+            (df[COL_ID] != selected_tag)
+        ].copy()
+        
+        simulated_ci = 0
+        current_dbh = tree_data[COL_CURRENT]
+        
+        if not candidates_df.empty:
+            for _, neighbor in candidates_df.iterrows():
+                d_deg = np.sqrt((neighbor[COL_X] - c_lon)**2 + (neighbor[COL_Y] - c_lat)**2)
+                
+                if d_deg <= radius_deg:
+                    d_meter = d_deg * 111111.0
+                    if d_meter < 0.1: d_meter = 0.1 
+                    
+                    total_neighbors += 1
+                    
+                    # IS NEIGHBOR REMOVED?
+                    if str(neighbor[COL_ID]) in thinning_ids:
+                        removed_neighbors += 1
+                    else:
+                        n_dbh = neighbor[COL_CURRENT]
+                        simulated_ci += (n_dbh / current_dbh) / d_meter
+                            
+        new_ci = simulated_ci
+        
+        # B. Predict (INCREMENT MODE)
         features = [COL_CURRENT, 'GROWTH_HIST', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
         
-        # Check if we have all needed features
         if all(f in tree_data for f in features):
-            row_vals = tree_data[features].copy()
+            input_row = tree_data[features].copy()
+            input_row['Competition_Index'] = new_ci # Update CI
             
-            # --- THE SIMULATION ---
-            # Reduce Competition Index by 50% (Simulating neighbor removal)
-            row_vals['Competition_Index'] = row_vals['Competition_Index'] * 0.5 
+            # Predict Increment
+            pred_increment = model.predict(pd.DataFrame([input_row]))[0]
             
-            # Predict
-            pred_thin_val = model.predict(pd.DataFrame([row_vals]))[0]
-            # Ensure no shrinking
-            pred_thin_val = max(pred_thin_val, tree_data[COL_CURRENT])
+            # Calculate Total
+            pred_thin_val = current_dbh + pred_increment
+            pred_thin_val = max(pred_thin_val, current_dbh)
             
             predictions.append({"Year": 2015, "DBH": pred_thin_val, "Type": "Predicted (After Thinning)"})
+        
+        # C. Stats
+        with col_sim2:
+            gain = pred_thin_val - tree_data['Predicted_Size']
+            if removed_neighbors > 0:
+                st.success(f"**Simulation Active:** Removed {removed_neighbors} of {total_neighbors} neighbors.")
+            else:
+                st.warning(f"**No Change:** Found {total_neighbors} neighbors, but NONE are in the removal list.")
             
-            improvement = pred_thin_val - tree_data['Predicted_Size']
-            if improvement > 0:
-                st.success(f"📉 Removing competition could add **+{improvement:.2f} cm** to growth!")
+            col_res1, col_res2, col_res3 = st.columns(3)
+            col_res1.metric("Old CI", f"{tree_data['Competition_Index']:.2f}")
+            col_res2.metric("New CI", f"{new_ci:.2f}", delta=f"-{tree_data['Competition_Index']-new_ci:.2f}", delta_color="inverse")
+            col_res3.metric("Growth Gain", f"+{gain:.2f} cm")
 
-    # Combine Data for Plotting
-    # We add the anchor point (last measured) to connect lines
+    # ==========================================
+    # 4. VISUALIZATION
+    # ==========================================
     plot_data = pd.DataFrame(chart_points)
-    
     pred_lines = []
+    
     if last_measured_year:
         for p in predictions:
-            # Add start point (2010) and end point (2015) for each line
             line_data = [
                 {"Year": last_measured_year, "DBH": last_measured_val, "Type": p["Type"]},
                 p
             ]
             pred_lines.append(pd.DataFrame(line_data))
 
-    # --- C. Visualization ---
     col_viz, col_stats = st.columns([2, 1])
     
     with col_viz:
         if not plot_data.empty:
-            # 1. Measured History (Solid Line)
             base = alt.Chart(plot_data).mark_line(point=True, strokeWidth=3).encode(
                 x=alt.X('Year:O', axis=alt.Axis(title="Year")),
                 y=alt.Y('DBH', scale=alt.Scale(zero=False), axis=alt.Axis(title="Diameter (cm)")),
-                color=alt.value("#2e7d32"), # Green
+                color=alt.value("#2e7d32"), 
                 tooltip=['Year', 'DBH', 'Type']
             )
-            
             final_chart = base
             
-            # 2. Add Prediction Lines (Dashed)
             colors = {"Predicted (Status Quo)": "#d32f2f", "Predicted (After Thinning)": "#1976d2"}
-            
-            for i, line_df in enumerate(pred_lines):
+            for line_df in pred_lines:
                 line_type = line_df.iloc[1]['Type']
                 c = colors.get(line_type, "grey")
-                
-                pred_layer = alt.Chart(line_df).mark_line(
+                final_chart += alt.Chart(line_df).mark_line(
                     point=True, strokeDash=[5, 5], strokeWidth=3
-                ).encode(
-                    x='Year:O', y='DBH',
-                    color=alt.value(c),
-                    tooltip=['Year', 'DBH', 'Type']
-                )
-                final_chart += pred_layer
+                ).encode(x='Year:O', y='DBH', color=alt.value(c), tooltip=['Year', 'DBH', 'Type'])
 
             st.altair_chart(final_chart.properties(height=400, title=f"Growth Trajectory: Tree #{selected_tag}"), use_container_width=True)
             
-            # Custom Legend
             st.caption("""
             **Legend:** <span style='color:#2e7d32'><b>———</b> Measured History</span> &nbsp;|&nbsp; 
             <span style='color:#d32f2f'><b>- - -</b> Status Quo Prediction</span> &nbsp;|&nbsp; 
             <span style='color:#1976d2'><b>- - -</b> Simulated Thinning</span>
             """, unsafe_allow_html=True)
 
-    # --- D. Stats Panel ---
     with col_stats:
         st.subheader("Tree Statistics")
-        st.info(f"Species: **{tree_data.get(COL_SPECIES, 'Unknown')}**")
-        
-        # Risk Meter
+        st.write(f"**Species:** {tree_data.get(COL_SPECIES, 'Unknown')}")
         if 'Mortality_Risk' in tree_data:
             risk = tree_data['Mortality_Risk'] * 100
-            color = "red" if risk > 50 else ("orange" if risk > 20 else "green")
             st.metric("Mortality Risk", f"{risk:.1f}%", delta="High" if risk > 50 else "Low", delta_color="inverse")
             st.progress(int(100 - risk))
-            st.caption(f"Survival Probability: {100-risk:.1f}%")
-
         st.divider()
-        st.write("**Measurements:**")
-        for p in chart_points:
-            st.text(f"{p['Year']}: {p['DBH']:.2f} cm")
+        st.write(f"**Current CI:** {tree_data['Competition_Index']:.2f}")
 
-    # Navigation
     st.markdown("---")
     c1, c2 = st.columns([1,1])
     if c1.button("⬅️ Back to Map"): st.switch_page("pages/1_Spatial_Map.py")
