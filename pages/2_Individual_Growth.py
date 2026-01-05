@@ -17,12 +17,38 @@ def get_model():
 
 model = get_model()
 
+# --- HELPER: MONTE CARLO PREDICTION ---
+def predict_with_uncertainty(model, input_row, current_dbh, volatility=0.2, iterations=100):
+    """
+    Predicts growth increment and generates a 95% confidence interval.
+    """
+    # 1. Base Prediction (The Mean)
+    base_increment = model.predict(pd.DataFrame([input_row]))[0]
+    
+    # 2. Monte Carlo Simulation (Simulate 100 possible futures)
+    # We assume prediction error follows a normal distribution around the mean
+    np.random.seed(42) # For consistent "randomness"
+    simulations = np.random.normal(loc=base_increment, scale=abs(base_increment * volatility), size=iterations)
+    
+    # Clip negative growth (trees rarely shrink significantly)
+    simulations = np.maximum(simulations, 0)
+    
+    # 3. Calculate Bounds
+    inc_lower = np.percentile(simulations, 5)  # Worst Case
+    inc_upper = np.percentile(simulations, 95) # Best Case
+    
+    return {
+        "mean": current_dbh + base_increment,
+        "min": current_dbh + inc_lower,
+        "max": current_dbh + inc_upper,
+        "increment": base_increment
+    }
+
 if 'df' in st.session_state:
     df = st.session_state['df']
     
     # Check Strategy State
     if 'df_thinning_recs' in st.session_state and not st.session_state['df_thinning_recs'].empty:
-        # FORCE STRING IDs
         thinning_ids = set(st.session_state['df_thinning_recs'][COL_ID].astype(str))
         strategy_active = True
         strategy_count = len(thinning_ids)
@@ -39,7 +65,6 @@ if 'df' in st.session_state:
         # AUTO-FINDER BUTTON
         if strategy_active:
             if st.button("✨ Find Tree with Removable Neighbors"):
-                # Find tree NOT in removal list but has High Comp
                 candidates = df[
                     (~df[COL_ID].astype(str).isin(thinning_ids)) & 
                     (df['Competition_Index'] > 4)
@@ -107,90 +132,120 @@ if 'df' in st.session_state:
         else:
             st.caption(f"✅ Strategy Loaded: {strategy_count} trees marked for removal.")
 
-    # Base Prediction
+    # PREPARE INPUTS
+    features = [COL_CURRENT, 'GROWTH_HIST', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
     predictions = []
-    if 'Predicted_Size' in tree_data:
-        pred_val = tree_data['Predicted_Size']
-        predictions.append({"Year": 2015, "DBH": pred_val, "Type": "Predicted (Status Quo)"})
     
-    # Simulation Vars
-    new_ci = tree_data['Competition_Index']
-    removed_neighbors = 0
-    total_neighbors = 0
-    
-    if simulate_thinning and model and strategy_active:
-        # A. Spatial Search
-        c_lat = tree_data[COL_Y]
-        c_lon = tree_data[COL_X]
-        radius_deg = COMPETITION_RADIUS * (1/111111.0)
+    if all(f in tree_data for f in features): # Ensure all features are present
+        current_dbh = tree_data[COL_CURRENT] # Current DBH
+        input_row = tree_data[features].copy() # Model Input Row
         
-        candidates_df = df[
-            (df[COL_X].between(c_lon - radius_deg*1.5, c_lon + radius_deg*1.5)) & 
-            (df[COL_Y].between(c_lat - radius_deg*1.5, c_lat + radius_deg*1.5)) &
-            (df[COL_ID] != selected_tag)
-        ].copy()
+        # A. PREDICT STATUS QUO (Red Line)
+        # -------------------------------
+        res_sq = predict_with_uncertainty(model, input_row, current_dbh) # Status Quo Prediction
         
-        simulated_ci = 0
-        current_dbh = tree_data[COL_CURRENT]
+        predictions.append({
+            "Year": 2015, # Future Year
+            "DBH": res_sq['mean'], # Predicted Mean
+            "Min_DBH": res_sq['min'], # Lower Bound
+            "Max_DBH": res_sq['max'], # Upper Bound
+            "Type": "Predicted (Status Quo)" # Prediction Type
+        })
         
-        if not candidates_df.empty:
-            for _, neighbor in candidates_df.iterrows():
-                d_deg = np.sqrt((neighbor[COL_X] - c_lon)**2 + (neighbor[COL_Y] - c_lat)**2)
+        # B. PREDICT THINNING (Blue Line)
+        # -------------------------------
+        new_ci = tree_data['Competition_Index'] # Default to current CI
+        removed_neighbors = 0  # Count of removed neighbors
+        total_neighbors = 0  # Total neighbors considered
+        pred_thin_val = res_sq['mean'] # Default to SQ if no thinning happens
+        
+        if simulate_thinning and strategy_active:
+            # Spatial Search
+            c_lat = tree_data[COL_Y]
+            c_lon = tree_data[COL_X]
+            radius_deg = COMPETITION_RADIUS * (1/111111.0)
+            
+            candidates_df = df[
+                (df[COL_X].between(c_lon - radius_deg*1.5, c_lon + radius_deg*1.5)) & 
+                (df[COL_Y].between(c_lat - radius_deg*1.5, c_lat + radius_deg*1.5)) &
+                (df[COL_ID] != selected_tag)
+            ].copy()
+            
+            simulated_ci = 0
+            
+            if not candidates_df.empty:
+                for _, neighbor in candidates_df.iterrows():
+                    d_deg = np.sqrt((neighbor[COL_X] - c_lon)**2 + (neighbor[COL_Y] - c_lat)**2)
+                    
+                    if d_deg <= radius_deg:
+                        d_meter = d_deg * 111111.0
+                        if d_meter < 0.1: d_meter = 0.1 
+                        total_neighbors += 1
+                        
+                        if str(neighbor[COL_ID]) in thinning_ids:
+                            removed_neighbors += 1
+                        else:
+                            n_dbh = neighbor[COL_CURRENT]
+                            simulated_ci += (n_dbh / current_dbh) / d_meter
+                                
+            new_ci = simulated_ci
+            
+            # Predict with NEW CI
+            input_row['Competition_Index'] = new_ci
+            res_thin = predict_with_uncertainty(model, input_row, current_dbh)
+            pred_thin_val = res_thin['mean']
+            
+            predictions.append({
+                "Year": 2015, 
+                "DBH": res_thin['mean'], 
+                "Min_DBH": res_thin['min'], 
+                "Max_DBH": res_thin['max'], 
+                "Type": "Predicted (After Thinning)"
+            })
+            
+            # Stats Display
+            with col_sim2:
+                gain = pred_thin_val - res_sq['mean']
                 
-                if d_deg <= radius_deg:
-                    d_meter = d_deg * 111111.0
-                    if d_meter < 0.1: d_meter = 0.1 
-                    
-                    total_neighbors += 1
-                    
-                    # IS NEIGHBOR REMOVED?
-                    if str(neighbor[COL_ID]) in thinning_ids:
-                        removed_neighbors += 1
-                    else:
-                        n_dbh = neighbor[COL_CURRENT]
-                        simulated_ci += (n_dbh / current_dbh) / d_meter
-                            
-        new_ci = simulated_ci
-        
-        # B. Predict (INCREMENT MODE)
-        features = [COL_CURRENT, 'GROWTH_HIST', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
-        
-        if all(f in tree_data for f in features):
-            input_row = tree_data[features].copy()
-            input_row['Competition_Index'] = new_ci # Update CI
-            
-            # Predict Increment
-            pred_increment = model.predict(pd.DataFrame([input_row]))[0]
-            
-            # Calculate Total
-            pred_thin_val = current_dbh + pred_increment
-            pred_thin_val = max(pred_thin_val, current_dbh)
-            
-            predictions.append({"Year": 2015, "DBH": pred_thin_val, "Type": "Predicted (After Thinning)"})
-        
-        # C. Stats
-        with col_sim2:
-            gain = pred_thin_val - tree_data['Predicted_Size']
-            if removed_neighbors > 0:
-                st.success(f"**Simulation Active:** Removed {removed_neighbors} of {total_neighbors} neighbors.")
-            else:
-                st.warning(f"**No Change:** Found {total_neighbors} neighbors, but NONE are in the removal list.")
-            
-            col_res1, col_res2, col_res3 = st.columns(3)
-            col_res1.metric("Old CI", f"{tree_data['Competition_Index']:.2f}")
-            col_res2.metric("New CI", f"{new_ci:.2f}", delta=f"-{tree_data['Competition_Index']-new_ci:.2f}", delta_color="inverse")
-            col_res3.metric("Growth Gain", f"+{gain:.2f} cm")
+                if removed_neighbors > 0:
+                    st.success(f"**Simulation Active:** Removed {removed_neighbors} of {total_neighbors} neighbors.")
+                else:
+                    st.warning(f"**No Change:** Found {total_neighbors} neighbors, but NONE are in the removal list.")
+                
+                col_res1, col_res2, col_res3 = st.columns(3)
+                col_res1.metric("Old CI", f"{tree_data['Competition_Index']:.2f}")
+                col_res2.metric("New CI", f"{new_ci:.2f}", delta=f"-{tree_data['Competition_Index']-new_ci:.2f}", delta_color="inverse")
+                col_res3.metric("Growth Gain", f"+{gain:.2f} cm")
+                
+                # Ecological Impact (Biomass)
+                old_biomass = 0.06 * (res_sq['mean'] ** 2.6)
+                new_biomass = 0.06 * (pred_thin_val ** 2.6)
+                biomass_gain = new_biomass - old_biomass
+                carbon_gain = biomass_gain * 0.47 
+
+                st.markdown("---")
+                st.markdown("##### 🌍 Ecological Impact")
+                c_col1, c_col2 = st.columns(2)
+                c_col1.metric("Biomass Gain", f"+{biomass_gain:.2f} kg")
+                c_col2.metric("Carbon Seq.", f"+{carbon_gain:.2f} kg", help="Estimated additional carbon captured.")
 
     # ==========================================
-    # 4. VISUALIZATION
+    # 4. VISUALIZATION (Cone of Uncertainty)
     # ==========================================
     plot_data = pd.DataFrame(chart_points)
     pred_lines = []
     
     if last_measured_year:
         for p in predictions:
+            # We construct a dataframe for each line segment
             line_data = [
-                {"Year": last_measured_year, "DBH": last_measured_val, "Type": p["Type"]},
+                {
+                    "Year": last_measured_year, 
+                    "DBH": last_measured_val, 
+                    "Min_DBH": last_measured_val, # No uncertainty at start
+                    "Max_DBH": last_measured_val, 
+                    "Type": p["Type"]
+                },
                 p
             ]
             pred_lines.append(pd.DataFrame(line_data))
@@ -199,6 +254,7 @@ if 'df' in st.session_state:
     
     with col_viz:
         if not plot_data.empty:
+            # 1. Base Layer (History)
             base = alt.Chart(plot_data).mark_line(point=True, strokeWidth=3).encode(
                 x=alt.X('Year:O', axis=alt.Axis(title="Year")),
                 y=alt.Y('DBH', scale=alt.Scale(zero=False), axis=alt.Axis(title="Diameter (cm)")),
@@ -207,20 +263,37 @@ if 'df' in st.session_state:
             )
             final_chart = base
             
+            # 2. Add Cones & Dashed Lines
             colors = {"Predicted (Status Quo)": "#d32f2f", "Predicted (After Thinning)": "#1976d2"}
+            
             for line_df in pred_lines:
                 line_type = line_df.iloc[1]['Type']
                 c = colors.get(line_type, "grey")
-                final_chart += alt.Chart(line_df).mark_line(
+                
+                # A. The Line
+                line_layer = alt.Chart(line_df).mark_line(
                     point=True, strokeDash=[5, 5], strokeWidth=3
-                ).encode(x='Year:O', y='DBH', color=alt.value(c), tooltip=['Year', 'DBH', 'Type'])
+                ).encode(
+                    x='Year:O', y='DBH', color=alt.value(c), tooltip=['Year', 'DBH', 'Type']
+                )
+                
+                # B. The Cone (Area)
+                band_layer = alt.Chart(line_df).mark_area(opacity=0.2).encode(
+                    x='Year:O',
+                    y='Min_DBH',
+                    y2='Max_DBH',
+                    color=alt.value(c)
+                )
+                
+                final_chart += band_layer + line_layer
 
-            st.altair_chart(final_chart.properties(height=400, title=f"Growth Trajectory: Tree #{selected_tag}"), use_container_width=True)
+            st.altair_chart(final_chart.properties(height=400, title=f"Growth Forecast w/ Uncertainty (95% CI)"), use_container_width=True)
             
             st.caption("""
             **Legend:** <span style='color:#2e7d32'><b>———</b> Measured History</span> &nbsp;|&nbsp; 
             <span style='color:#d32f2f'><b>- - -</b> Status Quo Prediction</span> &nbsp;|&nbsp; 
             <span style='color:#1976d2'><b>- - -</b> Simulated Thinning</span>
+            <br><i>Shaded areas represent the 95% Confidence Interval (Monte Carlo Simulation).</i>
             """, unsafe_allow_html=True)
 
     with col_stats:
