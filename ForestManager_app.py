@@ -8,6 +8,22 @@ from src.config import DATA_FILENAME, DEFAULT_MIN_DBH
 # 1. GLOBAL CONFIGURATION (Must be first)
 st.set_page_config(page_title="ForestManager", layout="wide")
 
+# 1. GLOBAL CONFIGURATION (Must be first)
+st.set_page_config(page_title="ForestManager", layout="wide")
+
+# ==========================================
+# 🎨 CUSTOM UI THEME (LOAD FROM EXTERNAL FILE)
+# ==========================================
+def apply_forest_theme():
+    try:
+        with open("style.css") as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.warning("⚠️ style.css not found. Theme not applied.")
+
+# Apply Theme Globally
+apply_forest_theme()
+
 # ==========================================
 # 2. SIDEBAR (Global Controls)
 # ==========================================

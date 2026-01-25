@@ -149,10 +149,10 @@ def run_predictions(df, model_grow, model_mort, encoder):
         df.loc[pred_df.index, 'Predicted_Growth'] = predicted_increment # Store increment
         
         # 2. Mortality
-        if model_mort is not None:
-            risk_probs = model_mort.predict_proba(pred_df)[:, 1] 
-            df.loc[pred_df.index, 'Mortality_Risk'] = risk_probs
+        if model_mort is not None: # Optional
+            risk_probs = model_mort.predict_proba(pred_df)[:, 1]  # Probability of mortality
+            df.loc[pred_df.index, 'Mortality_Risk'] = risk_probs # Store risk probabilities
         else:
-            df['Mortality_Risk'] = 0.0
+            df['Mortality_Risk'] = 0.0 # Default to 0 if no model
         
-    return df
+    return df # Return with predictions

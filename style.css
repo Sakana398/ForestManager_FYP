@@ -1,0 +1,49 @@
+/* 1. Main Title Gradient (Forest Green to Lime) */
+h1 span {
+    background: -webkit-linear-gradient(45deg, #1B5E20, #66BB6A);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 800;
+}
+
+/* 2. Sidebar Styling */
+[data-testid="stSidebar"] {
+    background-color: #010618; /* Light Green */
+    border-right: 2px solid #ada5e1;
+}
+
+/* 3. Metrics & Cards */
+div[data-testid="stMetric"] {
+    background-color: #065422;
+    border: 1px solid #E0E0E0;
+    padding: 15px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+/* 4. Button Polish */
+div.stButton > button {
+    background-color: #2E7D32;
+    color: white;
+    border-radius: 8px;
+    border: none;
+    padding: 10px 20px;
+    transition: all 0.3s ease;
+}
+div.stButton > button:hover {
+    background-color: #1B5E20;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+/* 5. Expander/Info Box Styling */
+.streamlit-expanderHeader {
+    background-color: hsl(123, 90%, 4%);
+    color: #2E7D32;
+    border-radius: 5px;
+}
+div[data-testid="stAlert"] {
+    background-color: #E8F5E9;
+    color: #1B5E20;
+    border: 1px solid #A5D6A7;
+}
