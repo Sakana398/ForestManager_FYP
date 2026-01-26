@@ -291,7 +291,7 @@ if 'df' in st.session_state:
                 
                 final_chart += band_layer + line_layer
 
-            st.altair_chart(final_chart.properties(height=400, title=f"Growth Forecast w/ Uncertainty (95% CI)"), use_container_width=True)
+            st.altair_chart(final_chart.properties(height=400, title=f""), use_container_width=True)
             
             st.caption("""
             **Legend:** <span style='color:#2e7d32'><b>———</b> Measured History</span> &nbsp;|&nbsp; 
@@ -348,7 +348,7 @@ if 'df' in st.session_state:
             # Combine
             final_hist = (base_hist + highlight_hist).properties(
                 height=200, 
-                title="Your Tree vs. Population"
+                title="Tree vs. Population"
             )
             
             st.altair_chart(final_hist, use_container_width=True)

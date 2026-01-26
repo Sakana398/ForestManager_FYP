@@ -149,12 +149,19 @@ if 'df' in st.session_state and 'df_thinning_recs' in st.session_state:
             f"<b>Risk:</b> {{Tooltip_Risk}}"
         )
 
-        st.pydeck_chart(pdk.Deck(
-            map_style="mapbox://styles/mapbox/satellite-streets-v11",
-            layers=[layer_trunk, layer_crown],
-            initial_view_state=view_state, 
-            tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222", "color": "#fff", "zIndex": "9999"}}
-        ))
+        # ------------------------------------------------
+        # 🔑 INTEGRATED MAPBOX KEY HERE
+        # ------------------------------------------------
+        try:
+            st.pydeck_chart(pdk.Deck(
+                map_style="mapbox://styles/mapbox/satellite-streets-v11", # Adds the "Plains" / Satellite view
+                layers=[layer_trunk, layer_crown],
+                initial_view_state=view_state, 
+                tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222", "color": "#fff", "zIndex": "9999"}},
+                api_keys={"mapbox": st.secrets["mapbox"]["token"]} # Loads key from secrets.toml
+            ))
+        except Exception as e:
+            st.error(f"⚠️ Map Loading Error: {e}. Please check your .streamlit/secrets.toml file.")
 
         # LEGEND
         if "Mortality" in view_mode:

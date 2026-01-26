@@ -70,9 +70,10 @@ def landing_page():
     st.subheader("Forest Thinning Decision Support System")
     st.markdown("---")
 
-    col1, col2 = st.columns([3, 2])
+    # --- ROW 1: WELCOME (Left) & MAP (Right) ---
+    row1_col1, row1_col2 = st.columns([3, 2], gap="large")
 
-    with col1:
+    with row1_col1:
         st.markdown("### 👋 Welcome")
         tree_count = len(df) if df is not None else 0
         
@@ -86,7 +87,62 @@ def landing_page():
             * **Min DBH Filter:** {min_dbh_input} cm
             """
         )
+        st.info("👈 Use the sidebar to adjust global settings before starting.")
+
+    with row1_col2:
+        st.markdown("### 📍 Study Site")
         
+        # Site Description (Condensed)
+        st.caption(
+            "**Pasoh Forest Reserve** (Negeri Sembilan, Malaysia). "
+            "A 50-hectare lowland dipterocarp research plot managed by FRIM."
+        )
+
+        # MAP RENDERING
+        ICON_URL = "https://img.icons8.com/plasticine/100/000000/marker.png"
+        icon_data = {
+            "url": ICON_URL,
+            "width": 128, "height": 128, "anchorY": 128
+        }
+        pasoh_coords = pd.DataFrame({
+            'lat': [2.982], 'lon': [102.313],
+            'name': ["Pasoh Forest Reserve"],
+            'icon_data': [icon_data]
+        })
+
+        icon_layer = pdk.Layer(
+            type="IconLayer",
+            data=pasoh_coords,
+            get_icon="icon_data",
+            get_size=4,
+            size_scale=15,
+            get_position='[lon, lat]',
+            pickable=True
+        )
+
+        view_state = pdk.ViewState(
+            latitude=2.982, longitude=102.313,
+            zoom=10, pitch=0
+        )
+        
+        tooltip = {"html": "<b>{name}</b>", "style": {"backgroundColor": "steelblue", "color": "white"}}
+
+        st.pydeck_chart(
+            pdk.Deck(
+                map_style=None,
+                initial_view_state=view_state,
+                layers=[icon_layer],
+                tooltip=tooltip
+            ),
+            use_container_width=True
+        )
+
+    st.markdown("---")
+
+    # --- ROW 2: HOW TO USE (Left) & METRICS (Right) ---
+    row2_col1, row2_col2 = st.columns([3, 2], gap="large")
+
+    with row2_col1:
         st.markdown("### 🚀 How to Use This App")
         st.markdown(
             """
@@ -98,13 +154,14 @@ def landing_page():
         )
 
         st.write("")
+        st.write("") # Spacing
         if st.session_state.get('model_loaded'):
             if st.button("🏁 Start Analysis (Go to Dashboard)", type="primary", use_container_width=True):
                 st.switch_page("pages/0_Dashboard.py")
         else:
             st.error("System Error: Data or Model could not be loaded. Please check your files.")
 
-    with col2:
+    with row2_col2:
         st.markdown("### 🧠 Understanding the Metrics")
         
         with st.expander("📉 Predicted Growth Percentile", expanded=False):
@@ -126,84 +183,28 @@ def landing_page():
                 """
             )
             
-        with st.expander("💀 Mortality Risk", expanded=False):
+        # CHANGED: Icon from 💀 to 🍂
+        with st.expander("🍂 Mortality Risk", expanded=False):
             st.write(
                 """
-                The probability (0-100%) that a tree will die in the next cycle based on its current competition and slow growth.
-                * **High Risk (>50%):** Immediate attention needed.
+                The probability (0-100%) that a tree will die in the next cycle.
+                * **Safe Range (0-50%):** Likely to survive.
+                * **Critical Range (50-100%):** High risk of mortality due to competition or poor health.
                 """
             )
 
-    # --- LOCATION MAP SECTION ---
-    st.markdown("---")
-    st.subheader("📍 Study Site Location")
-    
-    col_map_desc, col_map_view = st.columns([1, 3])
-    
-    with col_map_desc:
-        st.info(
-            """
-            **Pasoh Forest Reserve**
-            
-            *Negeri Sembilan, Malaysia*
-            
-            A 50-hectare research plot managed by FRIM. This lowland dipterocarp forest serves as the primary dataset for this model.
-            """
-        )
-    
-    with col_map_view:
-        # 1. Define Data (Single Point)
-        ICON_URL = "https://img.icons8.com/plasticine/100/000000/marker.png"
-
-        icon_data = {
-            "url": ICON_URL,
-            "width": 128,
-            "height": 128,
-            "anchorY": 128
-        }
-
-        pasoh_coords = pd.DataFrame({
-            'lat': [2.982],
-            'lon': [102.313],
-            'name': ["Pasoh Forest Reserve"],
-            'icon_data': [icon_data]
-        })
-
-        # 2. Define Layer
-        icon_layer = pdk.Layer(
-            type="IconLayer",
-            data=pasoh_coords,
-            get_icon="icon_data",
-            get_size=4,
-            size_scale=15,
-            get_position='[lon, lat]',
-            pickable=True
-        )
-
-        # 3. View State
-        view_state = pdk.ViewState(
-            latitude=2.982,
-            longitude=102.313,
-            zoom=11,
-            pitch=0
-        )
-        
-        # 4. Tooltip
-        tooltip = {"html": "<b>{name}</b>", "style": {"backgroundColor": "steelblue", "color": "white"}}
-
-        # 5. Render (FIXED: map_style=None uses Streamlit default, preventing errors)
-        st.pydeck_chart(
-            pdk.Deck(
-                map_style=None,  # <--- CHANGED FROM 'mapbox://...' TO None
-                initial_view_state=view_state,
-                layers=[icon_layer],
-                tooltip=tooltip
+        # ADDED: Monte Carlo Simulation explanation
+        with st.expander("🎲 Monte Carlo Simulation", expanded=False):
+            st.write(
+                """
+                A technique used to account for uncertainty in nature. 
+                We run the growth model multiple times with slight random variations in environmental factors to estimate a range of possible future outcomes (e.g., Optimistic vs. Pessimistic yield).
+                """
             )
-        )
 
     st.markdown("---")
     st.caption("ForestManager FYP v2.0 | Powered by XGBoost & Streamlit")
-
+    
 # ==========================================
 # 5. NAVIGATION SETUP
 # ==========================================
