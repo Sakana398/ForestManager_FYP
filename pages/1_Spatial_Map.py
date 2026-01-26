@@ -202,3 +202,19 @@ if 'df' in st.session_state and 'df_thinning_recs' in st.session_state:
 
 else:
     st.warning("⚠️ Data not loaded.")
+
+    # TEMPORARY DEBUGGING
+
+try:
+
+    token_check = st.secrets["mapbox"]["token"]
+
+    st.success(f"✅ Key Loaded: {token_check[:10]}...") # Shows first 10 chars
+
+except Exception as e:
+
+    st.error(f"❌ Key Error: {e}")
+
+    st.info("Make sure .streamlit/secrets.toml exists and has [mapbox] token = '...'")
+
+    st.stop()
