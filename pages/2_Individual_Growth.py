@@ -18,18 +18,30 @@ def get_model():
 model = get_model()
 
 # --- HELPER: MONTE CARLO PREDICTION ---
-def predict_with_uncertainty(model, input_row, current_dbh, volatility=0.2, iterations=100):
-    base_increment = model.predict(pd.DataFrame([input_row]))[0]
+def predict_with_uncertainty(model, input_row, baseline_size, volatility=0.2, iterations=100):
+    """
+    Predicts future size by adding modeled growth to a BASELINE size.
+    baseline_size: The starting size (e.g., D10) to add growth to.
+    """
+    # Ensure input is a proper DataFrame
+    input_df = pd.DataFrame([input_row])
+    
+    raw_increment = model.predict(input_df)[0]
+    
+    # Enforce Non-Negative Growth (Trees don't shrink)
+    base_increment = max(raw_increment, 0.0)
+    
     np.random.seed(42)
-    simulations = np.random.normal(loc=base_increment, scale=abs(base_increment * volatility), size=iterations)
+    simulations = np.random.normal(loc=base_increment, scale=abs(base_increment * volatility) + 0.01, size=iterations)
     simulations = np.maximum(simulations, 0)
+    
     inc_lower = np.percentile(simulations, 5)
     inc_upper = np.percentile(simulations, 95)
     
     return {
-        "mean": current_dbh + base_increment,
-        "min": current_dbh + inc_lower,
-        "max": current_dbh + inc_upper,
+        "mean": baseline_size + base_increment, # Add to the correct baseline (2010)
+        "min": baseline_size + inc_lower,
+        "max": baseline_size + inc_upper,
         "increment": base_increment
     }
 
@@ -47,12 +59,10 @@ if 'df' in st.session_state:
         strategy_count = 0
 
     # ==========================================
-    # 1. SELECT TREE & SIZE CONTEXT (TOP SECTION)
+    # 1. SELECT TREE & SIZE CONTEXT
     # ==========================================
-    # Split layout: Filters (Left) | Size Chart (Right)
     col_sel1, col_sel2 = st.columns([1, 2])
     
-    # --- LEFT: FILTERS ---
     with col_sel1:
         st.subheader("Select Target")
         if strategy_active:
@@ -86,40 +96,33 @@ if 'df' in st.session_state:
         selected_tag = st.selectbox("Select Tree Tag:", filtered_tags, index=idx)
         st.session_state['selected_tree_id'] = selected_tag
 
-    # GET DATA (Required for the chart on the right)
+    # GET DATA
     tree_data = df[df[COL_ID] == selected_tag].iloc[0]
 
-    # --- RIGHT: SIZE COMPARISON CHART (MOVED HERE) ---
     with col_sel2:
         if COL_CURRENT in df.columns:
             st.subheader("Population Distribution")
             
-            # Create Bins
             df['DBH_Class'] = (df[COL_CURRENT] // 5) * 5
             dist_data = df['DBH_Class'].value_counts().reset_index()
             dist_data.columns = ['DBH_Class', 'Count']
             
-            # Identify current tree
             current_tree_class = (tree_data[COL_CURRENT] // 5) * 5
             
-            # Base Layer (Grey)
             base_hist = alt.Chart(dist_data).mark_bar(color='#e0e0e0').encode(
                 x=alt.X('DBH_Class:O', title='DBH Class (cm)', sort='ascending'),
                 y=alt.Y('Count', title='Tree Count'),
                 tooltip=['DBH_Class', 'Count']
             )
             
-            # Highlight Layer (Red)
             highlight_data = dist_data[dist_data['DBH_Class'] == current_tree_class]
             highlight_hist = alt.Chart(highlight_data).mark_bar(color='#d32f2f').encode(
                 x='DBH_Class:O', y='Count', tooltip=['DBH_Class', 'Count']
             )
             
-            # Combine
             final_hist = (base_hist + highlight_hist).properties(height=180)
             st.altair_chart(final_hist, use_container_width=True)
             
-            # Percentile Text
             percentile = (df[COL_CURRENT] < tree_data[COL_CURRENT]).mean() * 100
             st.caption(f"📍 This tree ({tree_data[COL_CURRENT]:.1f} cm) is larger than **{percentile:.1f}%** of the forest.")
 
@@ -132,13 +135,14 @@ if 'df' in st.session_state:
     last_measured_year = None
     last_measured_val = None
     
+    # We loop through history to find the most recent valid size (D10)
     for year, col_name in sorted(COL_YEARS.items()):
         if col_name in df.columns:
             val = tree_data[col_name]
             if pd.notna(val) and val > 0:
                 chart_points.append({"Year": year, "DBH": val, "Type": "Measured"})
                 last_measured_year = year
-                last_measured_val = val
+                last_measured_val = val # This captures the 2010 size
 
     # ==========================================
     # 3. THINNING SIMULATION
@@ -160,16 +164,30 @@ if 'df' in st.session_state:
         else:
             st.caption(f"✅ Strategy Loaded: {strategy_count} trees marked for removal.")
 
-    # PREPARE INPUTS
-    features = [COL_CURRENT, 'GROWTH_HIST', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
+    features = [
+        COL_CURRENT, 'GROWTH_HIST', 
+        'Nearest_Neighbor_Dist', 'Local_Density', 
+        'Competition_Index', 'Interaction_Vigor_Comp', 
+        'SP_Encoded'
+    ]
+    
     predictions = []
     
-    if all(f in tree_data for f in features):
-        current_dbh = tree_data[COL_CURRENT]
+    # Defensively fill missing columns
+    for col in features:
+        if col not in tree_data:
+            tree_data[col] = 0.0
+
+    if all(f in tree_data for f in features) and last_measured_val is not None:
+        # Use D05 features for the RATE, but add to D10 for the PROJECTION
+        current_dbh_for_rate = tree_data[COL_CURRENT] 
         input_row = tree_data[features].copy()
         
+        # [CRITICAL] Use last_measured_val (D10) as the baseline for 2015
+        baseline_for_projection = last_measured_val 
+        
         # A. PREDICT STATUS QUO
-        res_sq = predict_with_uncertainty(model, input_row, current_dbh)
+        res_sq = predict_with_uncertainty(model, input_row, baseline_for_projection)
         predictions.append({
             "Year": 2015,
             "DBH": res_sq['mean'],
@@ -210,11 +228,21 @@ if 'df' in st.session_state:
                             removed_neighbors += 1
                         else:
                             n_dbh = neighbor[COL_CURRENT]
-                            simulated_ci += (n_dbh / current_dbh) / d_meter
+                            simulated_ci += (n_dbh / current_dbh_for_rate) / d_meter
                                 
+            # Update Features
+            old_ci = tree_data['Competition_Index']
             new_ci = simulated_ci
             input_row['Competition_Index'] = new_ci
-            res_thin = predict_with_uncertainty(model, input_row, current_dbh)
+
+            if old_ci > 0:
+                species_factor = tree_data['Interaction_Vigor_Comp'] / old_ci
+                input_row['Interaction_Vigor_Comp'] = new_ci * species_factor
+            else:
+                input_row['Interaction_Vigor_Comp'] = 0.0
+
+            # Run Prediction (Adding to the 2010 baseline)
+            res_thin = predict_with_uncertainty(model, input_row, baseline_for_projection)
             pred_thin_val = res_thin['mean']
             
             predictions.append({
@@ -241,7 +269,7 @@ if 'df' in st.session_state:
             
 
     # ==========================================
-    # 4. VISUALIZATION (Main Layout)
+    # 4. VISUALIZATION
     # ==========================================
     plot_data = pd.DataFrame(chart_points)
     pred_lines = []
@@ -301,12 +329,18 @@ if 'df' in st.session_state:
             """, unsafe_allow_html=True)
 
     with col_stats:
-        # A. TREE STATISTICS
         st.subheader("Tree Statistics")
         st.write(f"**Species:** {tree_data.get(COL_SPECIES, 'Unknown')}")
         if 'Mortality_Risk' in tree_data:
             risk = tree_data['Mortality_Risk'] * 100
-            st.metric("Mortality Risk", f"{risk:.1f}%", delta="High" if risk > 50 else "Low", delta_color="inverse")
+            
+            # [FIXED] Force "- Low" to trigger Green Down Arrow
+            if risk > 50:
+                risk_label = "+ High"
+            else:
+                risk_label = "- Low"
+            
+            st.metric("Mortality Risk", f"{risk:.1f}%", delta=risk_label, delta_color="inverse")
             st.progress(int(100 - risk))
         
         st.divider()

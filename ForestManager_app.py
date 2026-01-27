@@ -4,21 +4,12 @@ import pandas as pd
 import pydeck as pdk
 from src.utils import load_and_process_data, load_model_resources, run_predictions
 from src.config import DATA_FILENAME, DEFAULT_MIN_DBH
+from src.utils import load_css
 
 # 1. GLOBAL CONFIGURATION (Must be first)
 st.set_page_config(page_title="ForestManager", layout="wide")
 
-# ==========================================
-# 🎨 CUSTOM UI THEME
-# ==========================================
-def apply_forest_theme():
-    try:
-        with open("style.css") as f:
-            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-    except FileNotFoundError:
-        st.warning("⚠️ style.css not found. Theme not applied.")
-
-apply_forest_theme()
+load_css()
 
 # ==========================================
 # 2. SIDEBAR (Global Controls)

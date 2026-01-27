@@ -1,18 +1,18 @@
 # train_model.py
 import pandas as pd
 import numpy as np
-from xgboost import XGBRegressor, XGBClassifier 
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, accuracy_score
-from sklearn.preprocessing import LabelEncoder
 import joblib
-from scipy.spatial import cKDTree
-from src.config import *
 import warnings
+from xgboost import XGBRegressor, XGBClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import mean_squared_error, r2_score, accuracy_score
+from sklearn.preprocessing import LabelEncoder
+from src.config import *
+from src.utils import add_spatial_features, standardize_coordinates
 
 warnings.filterwarnings("ignore")
 
-print(f"🌲 Training System (Growth Increment Mode) on: {DATA_FILENAME}")
+print(f"🌲 Training System on: {DATA_FILENAME}")
 
 # ==========================================
 # 1. LOAD & CLEAN
@@ -23,7 +23,6 @@ except:
     df = pd.read_csv(DATA_FILENAME, encoding='latin1')
 
 df.columns = df.columns.str.strip()
-
 if COL_SPECIES in df.columns:
     df[COL_SPECIES] = df[COL_SPECIES].astype(str).str.strip()
 
@@ -34,97 +33,132 @@ for c in [COL_HISTORY, COL_CURRENT, COL_TARGET]:
 # ==========================================
 # 2. FEATURE ENGINEERING
 # ==========================================
-print("   Processing Spatial Features...")
-df_valid = df[df[COL_CURRENT] > 0].copy()
-df_valid = df_valid.dropna(subset=[COL_X, COL_Y])
+print("   Generating Features...")
 
-# Features
-df_valid['GROWTH_HIST'] = df_valid[COL_CURRENT] - df_valid[COL_HISTORY]
-df_valid.loc[df_valid[COL_HISTORY] == 0, 'GROWTH_HIST'] = 0 
+# A. Basic History
+df['GROWTH_HIST'] = df[COL_CURRENT] - df[COL_HISTORY]
+df.loc[df[COL_HISTORY] == 0, 'GROWTH_HIST'] = 0 
 
-# Spatial
-coords = df_valid[[COL_X, COL_Y]].values
-tree = cKDTree(coords)
+# B. Spatial Features
+df = standardize_coordinates(df)
+df = add_spatial_features(df)
 
-dists, _ = tree.query(coords, k=2) 
-df_valid['Nearest_Neighbor_Dist'] = dists[:, 1] * 111111 # Convert deg to meters
-
-# Density
-radius_deg = DENSITY_RADIUS * (1/111111)
-counts = tree.query_ball_point(coords, r=radius_deg, return_length=True)
-df_valid['Local_Density'] = counts - 1
-
-# Competition Index (Fixed Meters Logic)
-idx_map = []
-radius_ci_deg = COMPETITION_RADIUS * (1/111111)
-neighbor_indices = tree.query_ball_point(coords, r=radius_ci_deg)
-dbh_values = df_valid[COL_CURRENT].values
-
-for i, neighbors in enumerate(neighbor_indices):
-    subject_dbh = dbh_values[i]
-    ci = 0
-    for n_idx in neighbors:
-        if i == n_idx: continue
-        d_deg = np.linalg.norm(coords[i] - coords[n_idx])
-        d_m = d_deg * 111111
-        if d_m > 0.1:
-            ci += (dbh_values[n_idx] / subject_dbh) / d_m
-    idx_map.append(ci)
-df_valid['Competition_Index'] = idx_map
-
-# Encoder
+# C. Encode Species
 encoder = LabelEncoder()
-df_valid['SP_Encoded'] = encoder.fit_transform(df_valid[COL_SPECIES])
+df['SP_Encoded'] = encoder.fit_transform(df[COL_SPECIES].astype(str))
 
-features = [COL_CURRENT, 'GROWTH_HIST', 'Nearest_Neighbor_Dist', 'Local_Density', 'Competition_Index', 'SP_Encoded']
+# Feature List
+features = [
+    COL_CURRENT, 'GROWTH_HIST', 
+    'Nearest_Neighbor_Dist', 'Local_Density', 
+    'Competition_Index', 'Interaction_Vigor_Comp', 
+    'SP_Encoded'
+]
 
 # ==========================================
-# 3. TRAIN MORTALITY
+# 3. PREPARE DATASETS (CRITICAL FIX)
+# ==========================================
+# Filter 1: Base Valid Data (Must have coordinates and current size)
+df_base = df.dropna(subset=[COL_X, COL_Y, COL_CURRENT, 'Competition_Index']).copy()
+df_base = df_base[df_base[COL_CURRENT] > 0] # Must be alive at start
+
+print(f"   Base Dataset: {len(df_base)} trees")
+
+# --- DATASET A: MORTALITY (Includes Dead Trees) ---
+# We keep trees even if Target=0 (Dead)
+df_mortality = df_base.copy()
+df_mortality['IS_DEAD'] = (df_mortality[COL_TARGET] == 0).astype(int)
+
+# --- DATASET B: GROWTH (Survivors Only) ---
+# We only keep trees that survived (Target > 0) AND have realistic growth
+df_growth = df_base[df_base[COL_TARGET] > 0].copy()
+df_growth['Target_Growth'] = df_growth[COL_TARGET] - df_growth[COL_CURRENT]
+
+# Remove anomalies (e.g. tree shrinking 5cm or growing 10cm in 5 years)
+mask_realistic = (df_growth['Target_Growth'] > -0.5) & (df_growth['Target_Growth'] < 5.0)
+df_growth = df_growth[mask_realistic]
+
+print(f"   Training Mortality on: {len(df_mortality)} trees (Dead: {df_mortality['IS_DEAD'].sum()})")
+print(f"   Training Growth on:    {len(df_growth)} trees")
+
+# ==========================================
+# 4. TRAIN MORTALITY MODEL
 # ==========================================
 print("\n💀 Training Mortality Risk Model...")
-df_valid['IS_DEAD'] = (df_valid[COL_TARGET] == 0).astype(int)
-X = df_valid[features]
-y_mort = df_valid['IS_DEAD']
 
-num_dead = y_mort.sum()
-weight = (len(y_mort) - num_dead) / num_dead if num_dead > 0 else 1.0
+X_mort = df_mortality[features]
+y_mort = df_mortality['IS_DEAD']
 
-clf = XGBClassifier(
-    n_estimators=100, learning_rate=0.1, max_depth=6,
-    scale_pos_weight=weight, random_state=RANDOM_STATE, n_jobs=-1, eval_metric='logloss'
-)
-clf.fit(X, y_mort) # Fit on full data for app
+# Check if we actually have dead trees
+if y_mort.sum() < 2:
+    print("   ⚠️ WARNING: Not enough dead trees to train Mortality Model. Using dummy model.")
+    clf = XGBClassifier(n_estimators=1) # Dummy
+    clf.fit(X_mort, y_mort)
+else:
+    # Handle Imbalance
+    num_dead = y_mort.sum()
+    weight = (len(y_mort) - num_dead) / num_dead
+    
+    clf = XGBClassifier(
+        n_estimators=100, 
+        max_depth=6, 
+        scale_pos_weight=weight, # Balance classes
+        eval_metric='logloss',
+        base_score=0.5 # Fix for some XGBoost versions
+    )
+    clf.fit(X_mort, y_mort)
 
-# ==========================================
-# 4. TRAIN GROWTH (INCREMENT MODE)
-# ==========================================
-print("\n📈 Training Growth Model (Predicting Increment)...")
-df_survived = df_valid[df_valid['IS_DEAD'] == 0].copy()
-
-X_grow = df_survived[features]
-
-# --- KEY CHANGE: TARGET IS GROWTH, NOT TOTAL SIZE ---
-y_grow_total = df_survived[COL_TARGET]
-y_grow_increment = y_grow_total - df_survived[COL_CURRENT] # Predict the CHANGE
-
-# Clip negative growth (trees shouldn't shrink) to 0 for training stability
-y_grow_increment = y_grow_increment.clip(lower=-0.5) 
-
-reg = XGBRegressor(
-    n_estimators=100, learning_rate=0.1, max_depth=6,
-    random_state=RANDOM_STATE, n_jobs=-1
-)
-reg.fit(X_grow, y_grow_increment)
-
-# Check Importance
-print("   Feature Importance:")
-for name, score in zip(features, reg.feature_importances_):
-    print(f"   - {name}: {score:.4f}")
+# Evaluate
+preds = clf.predict(X_mort)
+acc = accuracy_score(y_mort, preds)
+print(f"   - Accuracy: {acc:.2%}")
 
 # ==========================================
-# 5. SAVE
+# 5. TUNE GROWTH MODEL (Survivors)
 # ==========================================
-joblib.dump(reg, MODEL_FILENAME)
+print("\n📈 Tuning Growth Model (Grid Search)...")
+
+X_grow = df_growth[features]
+y_grow = df_growth['Target_Growth']
+
+if len(df_growth) > 50:
+    param_grid = {
+        'n_estimators': [100, 200],
+        'learning_rate': [0.05, 0.1],
+        'max_depth': [4, 6],
+        'subsample': [0.8, 1.0]
+    }
+
+    xgb = XGBRegressor(random_state=RANDOM_STATE, n_jobs=-1)
+
+    grid = GridSearchCV(
+        estimator=xgb,
+        param_grid=param_grid,
+        scoring='neg_mean_squared_error',
+        cv=3,
+        verbose=1
+    )
+
+    grid.fit(X_grow, y_grow)
+    best_model = grid.best_estimator_
+    print(f"\n🏆 Best Parameters: {grid.best_params_}")
+
+    # Evaluate
+    preds = best_model.predict(X_grow)
+    rmse = np.sqrt(mean_squared_error(y_grow, preds))
+    r2 = r2_score(y_grow, preds)
+
+    print(f"   - RMSE: {rmse:.4f} cm")
+    print(f"   - R² Score: {r2:.4f}")
+else:
+    print("   ⚠️ Not enough data for GridSearch. Training simple model.")
+    best_model = XGBRegressor(n_estimators=100)
+    best_model.fit(X_grow, y_grow)
+
+# ==========================================
+# 6. SAVE ARTIFACTS
+# ==========================================
+joblib.dump(best_model, MODEL_FILENAME)
 joblib.dump(clf, MORTALITY_MODEL_FILENAME)
 joblib.dump(encoder, ENCODER_FILENAME)
-print("\n✅ Models Updated (Growth Increment Mode).")
+print("\n✅ Optimized Models Saved.")
