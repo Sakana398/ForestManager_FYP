@@ -139,19 +139,56 @@ def landing_page():
 
     with row2_col2:
         st.markdown("### 🧠 Understanding the Metrics")
+        
         with st.expander("📉 Predicted Growth Percentile", expanded=False):
-            st.write("The AI model predicts diameter growth. Filtering by **Percentile** allows you to target the slowest growers.")
+            st.write("""
+            **What it is:** A ranking of how fast a tree is expected to grow compared to the rest of the forest.
+            - **0-20th Percentile:** Stagnant/Suppressed trees. (Prime candidates for removal).
+            - **80-100th Percentile:** High-vigor, dominant trees. (Should typically be protected).
+            
+            *Use this filter to quickly isolate the underperforming trees that are not contributing to forest biomass.*
+            """)
+
         with st.expander("⚔️ Hegyi's Competition Index (CI)", expanded=False):
-            st.write("Measures stress from neighbors. High CI = High Stress/Crowding.")
+            st.write("""
+            **What it is:** A mathematical score representing the crowding pressure on a specific tree.
+            
+            **The Formula:**
+            $$CI_i = \sum_{j=1}^{n} \\left( \\frac{DBH_j}{DBH_i} \\times \\frac{1}{Dist_{ij}} \\right)$$
+            *Where $DBH_j$ is the neighbor size, $DBH_i$ is the subject size, and $Dist$ is the distance.*
+            
+            **Interpretation:**
+            - **CI < 3:** Low Competition (Free growing).
+            - **CI 3 - 6:** Moderate Competition.
+            - **CI > 8:** High Competition (Tree is likely under severe stress).
+            """)
+
         with st.expander("🍂 Mortality Risk", expanded=False):
-            st.write("Probability (0-100%) that a tree will die in the next cycle.")
+            st.write("""
+            **What it is:** The likelihood (0% to 100%) that this specific tree will die within the next 5-year cycle.
+            
+            **Risk Levels:**
+            - 🟢 **Low Risk (< 20%):** Tree is healthy and likely to survive.
+            - 🟠 **Medium Risk (20% - 50%):** Tree is showing signs of stress.
+            - 🔴 **High Risk (> 50%):** Tree is critically stressed and highly likely to die.
+            
+            **Key Drivers:**
+            The AI calculates this based on **stopped growth** (stagnation), **high competition** (overcrowding), and **small size** (sapling vulnerability).
+            """)
         with st.expander("🎲 Monte Carlo Simulation", expanded=False):
-            st.write("Runs the model multiple times with random variations to estimate uncertainty ranges.")
+            st.write("""
+            **Why we use it:** Nature is unpredictable. Even the best AI cannot predict weather or disease perfectly.
+            
+            **How it works:**
+            Instead of giving one single guess, we run the growth prediction **100 times** with slight random variations (noise).
+            - **Shaded Area:** Represents the **95% Confidence Interval** (The range where the true growth is most likely to fall).
+            - **Dashed Line:** The most probable average outcome.
+            """)
 
     st.markdown("---")
-    st.caption("ForestManager FYP v2.0 | Powered by XGBoost & Streamlit")
+    st.caption("Developed for Final Year Project / Univesiti Putra Malaysia (UPM) © 2026")
 
-# ==========================================
+# ==========================================    
 # 5. NAVIGATION SETUP
 # ==========================================
 pages = [
