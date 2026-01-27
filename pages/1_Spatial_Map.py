@@ -5,216 +5,234 @@ import pandas as pd
 import numpy as np
 from src.config import *
 
-st.set_page_config(page_title="ForestManager | 3D Map", layout="wide")
+st.set_page_config(page_title="ForestManager | Digital Twin", layout="wide")
 
-st.title("🗺️ 3D Forest Structure Visualization")
+st.title("🗺️ Forest Digital Twin")
 
-# --- CSS FOR LEGEND ---
-st.markdown("""
-    <style>
-    .map-legend {
-        position: fixed; bottom: 30px; right: 30px; background-color: rgba(255, 255, 255, 0.90); 
-        color: #333; padding: 15px; border-radius: 8px; border: 1px solid #ccc; z-index: 9999;
-        font-family: 'Segoe UI', sans-serif; font-size: 13px; box-shadow: 0px 4px 15px rgba(0,0,0,0.2); 
-        min-width: 160px; backdrop-filter: blur(4px);
-    }
-    .legend-title { font-weight: 700; margin-bottom: 8px; border-bottom: 1px solid #ddd; padding-bottom: 5px; display: block; font-size: 14px;}
-    .legend-item { display: flex; align-items: center; margin-bottom: 6px; }
-    .legend-dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 10px; display: inline-block; border: 1px solid #999;}
-    </style>
-""", unsafe_allow_html=True)
+# --- 1. SECURE TOKEN ---
+try:
+    MAPBOX_KEY = st.secrets["mapbox"]["token"]
+except:
+    st.error("🚨 Mapbox token missing. Check .streamlit/secrets.toml")
+    st.stop()
 
-if 'df' in st.session_state and 'df_thinning_recs' in st.session_state:
-    df_all = st.session_state['df'].copy()
-    
-    # 1. CLEAN DATA
-    for col in [COL_X, COL_Y, COL_CURRENT]:
-        df_all[col] = pd.to_numeric(df_all[col], errors='coerce').fillna(0)
-    
-    # Filter out trees with invalid coordinates (0,0)
-    df_all = df_all[(df_all[COL_X] > 100) & (df_all[COL_Y] > 0)]
-    
-    # -----------------------------------------------------------
-    # 🌍 CRITICAL FIX: USE RAW COORDINATES DIRECTLY
-    # -----------------------------------------------------------
-    # Your XCO/YCO are already Longitude/Latitude
-    df_all['lon_viz'] = df_all[COL_X]
-    df_all['lat_viz'] = df_all[COL_Y]
-    
-    # Pack into a single list column for PyDeck: [Lon, Lat]
-    df_all['trunk_coords'] = df_all[['lon_viz', 'lat_viz']].values.tolist()
+# --- 2. PASOH ANCHOR ---
+PASOH_LAT = 2.9788
+PASOH_LON = 102.3131
 
-    # Calculate Z (Height) for the Crown
-    # Visual Scale: Height (m) = DBH (cm) * 1.0
-    df_all['tree_height'] = df_all[COL_CURRENT] * 1.0
+if 'df' in st.session_state:
+    raw_df = st.session_state['df'].copy()
     
-    # Pack Crown Coords: [Lon, Lat, Height]
-    df_all['crown_coords'] = df_all[['lon_viz', 'lat_viz', 'tree_height']].values.tolist()
-    
-    # Crown Radius (Visual)
-    df_all['crown_radius'] = (df_all[COL_CURRENT] / 100.0) * 5.0 
-    df_all['crown_radius'] = df_all['crown_radius'].clip(lower=1.0, upper=8.0)
-
-    # Tooltips & Colors
-    if 'Mortality_Risk' not in df_all.columns: df_all['Mortality_Risk'] = 0.0
-    df_all['Mortality_Risk'] = df_all['Mortality_Risk'].fillna(0.0)
-    df_all['Tooltip_Risk'] = (df_all['Mortality_Risk'] * 100).round(1).astype(str) + '%'
-
-    if not st.session_state['df_thinning_recs'].empty:
-        thinning_tags = set(st.session_state['df_thinning_recs'][COL_ID])
+    # 🌍 COORDINATE FIX
+    # If data is > 180, it's Meters -> Convert to GPS. 
+    # If data is < 180, it's already GPS -> Use directly.
+    meters_per_deg = 111139.0
+    if raw_df[COL_X].max() > 180:
+        raw_df['lon'] = PASOH_LON + (raw_df[COL_X] / meters_per_deg)
+        raw_df['lat'] = PASOH_LAT + (raw_df[COL_Y] / meters_per_deg)
     else:
-        thinning_tags = set()
+        raw_df['lon'] = raw_df[COL_X]
+        raw_df['lat'] = raw_df[COL_Y]
+
+    # Load Thinning Data
+    thinning_ids = set()
+    if 'df_thinning_recs' in st.session_state and not st.session_state['df_thinning_recs'].empty:
+         thinning_ids = set(st.session_state['df_thinning_recs'][COL_ID].astype(str))
 
     # ==========================================
-    # 2. CONTROLS
+    # 3. FILTERS (Top Row)
+    # ==========================================
+    c1, c2, c3 = st.columns([1.5, 1.5, 1.5])
+    
+    with c1:
+        st.write("#### 🎯 Quick Find")
+        if thinning_ids:
+            if st.button(f"✨ Find Candidate ({len(thinning_ids)} trees)", type="primary", use_container_width=True):
+                # Filter for candidates that actually exist in the map
+                candidates = raw_df[raw_df[COL_ID].astype(str).isin(thinning_ids)]
+                if not candidates.empty:
+                    st.session_state['map_search_tag'] = candidates.sample(1).iloc[0][COL_ID]
+                    st.rerun()
+                else:
+                    st.warning("No candidates found in current view.")
+        else:
+            st.button("✨ Find Tree...", disabled=True, use_container_width=True)
+
+    with c2:
+        st.write("#### 🌿 Filter Species")
+        all_species = sorted(raw_df[COL_SPECIES].unique()) if COL_SPECIES in raw_df.columns else []
+        sel_species = st.selectbox("Species", ["All"] + all_species, label_visibility="collapsed")
+
+    with c3:
+        st.write("#### 🏷️ Select Tree Tag")
+        if sel_species != "All":
+            filtered_df = raw_df[raw_df[COL_SPECIES] == sel_species]
+        else:
+            filtered_df = raw_df
+            
+        available_tags = sorted(filtered_df[COL_ID].unique())
+        
+        # Handle Selection
+        default_idx = 0
+        if 'map_search_tag' in st.session_state and st.session_state['map_search_tag'] in available_tags:
+            default_idx = available_tags.index(st.session_state['map_search_tag'])
+            
+        search_tag = st.selectbox("Tag", ["None"] + available_tags, index=default_idx if 'map_search_tag' in st.session_state else 0, label_visibility="collapsed")
+
+    # Apply Filters
+    map_df = filtered_df.copy()
+
+    # ==========================================
+    # 4. MAP SETTINGS (Exact Layout Request)
     # ==========================================
     with st.expander("🛠️ Map Settings", expanded=True):
-        col_c1, col_c2, col_c3 = st.columns([1.5, 1, 1])
-        with col_c1:
-            view_mode = st.radio("Color Mode:", ["Thinning Candidates (Action)", "Mortality Risk (Heatmap)", "Post-Thinning Scenario"], horizontal=True)
-        with col_c2:
-            min_dbh_view = st.slider("Hide Small Trees (< cm):", 0, 50, 10, 5)
-        with col_c3:
-            opacity = st.slider("Canopy Opacity:", 0.1, 1.0, 0.8, 0.1)
-
-    # ==========================================
-    # 3. COLOR LOGIC
-    # ==========================================
-    df_view = df_all[df_all[COL_CURRENT] >= min_dbh_view].copy()
-    
-    def get_crown_color(row):
-        try:
-            if "Mortality" in view_mode:
-                risk = max(0.0, min(1.0, float(row['Mortality_Risk'])))
-                r = int(255 * risk)
-                g = int(255 * (1 - risk))
-                return [r, g, 50, int(opacity * 255)]
-            elif "Thinning" in view_mode:
-                if row[COL_ID] in thinning_tags:
-                    return [255, 80, 80, int(opacity * 255)] # Coral
-                else:
-                    return [60, 180, 130, int(opacity * 255)] # Green
-            else: 
-                return [60, 180, 130, int(opacity * 255)]
-        except:
-            return [128, 128, 128, 150]
-
-    if "Post-Thinning" in view_mode:
-        df_view = df_view[~df_view[COL_ID].isin(thinning_tags)]
-
-    # ==========================================
-    # 4. RENDER MAP
-    # ==========================================
-    if not df_view.empty:
-        df_view['crown_color'] = df_view.apply(get_crown_color, axis=1)
+        sc1, sc2, sc3 = st.columns([1.2, 1, 1])
         
-        # LAYER 1: TRUNK (Wood Cylinder)
-        layer_trunk = pdk.Layer(
-            "ColumnLayer",
-            data=df_view,
-            get_position='trunk_coords',
-            get_elevation='tree_height',
-            elevation_scale=1.0,
-            radius=0.3,                   
-            get_fill_color=[101, 67, 33], # Brown
-            pickable=False,
-            extruded=True,
-        )
+        with sc1:
+            st.write("**Color Mode:**")
+            color_mode = st.radio(
+                "Color Mode", 
+                ["Thinning Candidates (Action)", "Mortality Risk (Heatmap)", "Post-Thinning Scenario"], 
+                label_visibility="collapsed"
+            )
+            
+        with sc2:
+            st.write("**Filters:**")
+            min_dbh = st.slider("Hide Small Trees (< cm):", 0, 50, 0) # Default 0 to show ALL trees
 
-        # LAYER 2: CROWN (Leafy Sphere)
-        layer_crown = pdk.Layer(
-            "ScatterplotLayer",
-            data=df_view,
-            get_position='crown_coords',  # <--- [Lon, Lat, Height]
-            get_radius="crown_radius",
-            radius_scale=1,
-            get_fill_color="crown_color",
-            pickable=True,
-            stroked=False,
-            filled=True,
-        )
+        with sc3:
+            st.write("**Visuals:**")
+            opacity = st.slider("Canopy Opacity:", 0.1, 1.0, 0.8)
+            isolate_mode = st.checkbox("🔍 Isolate Red Dots (Hide Green)", value=False)
 
-        view_state = pdk.ViewState(
-            longitude=df_view['lon_viz'].mean(),
-            latitude=df_view['lat_viz'].mean(),
-            zoom=18,
-            pitch=60,
-            bearing=0
-        )
+    # Filter by Size
+    map_df = map_df[map_df[COL_CURRENT] >= min_dbh]
 
-        tooltip_html = (
-            f"<b>ID:</b> {{{COL_ID}}}<br>"
-            f"<b>Species:</b> {{{COL_SPECIES}}}<br>"
-            f"<b>Size:</b> {{{COL_CURRENT}}} cm<br>"
-            f"<b>Risk:</b> {{Tooltip_Risk}}"
-        )
-
-        # ------------------------------------------------
-        # 🔑 INTEGRATED MAPBOX KEY HERE
-        # ------------------------------------------------
-        try:
-            st.pydeck_chart(pdk.Deck(
-                map_style="mapbox://styles/mapbox/satellite-streets-v11", # Adds the "Plains" / Satellite view
-                layers=[layer_trunk, layer_crown],
-                initial_view_state=view_state, 
-                tooltip={"html": tooltip_html, "style": {"backgroundColor": "#222", "color": "#fff", "zIndex": "9999"}},
-                api_keys={"mapbox": st.secrets["mapbox"]["token"]} # Loads key from secrets.toml
-            ))
-        except Exception as e:
-            st.error(f"⚠️ Map Loading Error: {e}. Please check your .streamlit/secrets.toml file.")
-
-        # LEGEND
-        if "Mortality" in view_mode:
-            legend_html = """
-                <div class='map-legend'>
-                    <span class='legend-title'>Mortality Risk</span>
-                    <div class='legend-item'><span class='legend-dot' style='background: #FF5050;'></span>High Risk (Dying)</div>
-                    <div class='legend-item'><span class='legend-dot' style='background: #FFDD44;'></span>Moderate Risk</div>
-                    <div class='legend-item'><span class='legend-dot' style='background: #44CC44;'></span>Healthy</div>
-                </div>
-            """
-        elif "Thinning" in view_mode:
-             legend_html = """
-                <div class='map-legend'>
-                    <span class='legend-title'>Action Plan</span>
-                    <div class='legend-item'><span class='legend-dot' style='background: #FF5050;'></span>Removal Candidate</div>
-                    <div class='legend-item'><span class='legend-dot' style='background: #3CB482;'></span>Crop Tree (Keep)</div>
-                </div>
-            """
-        else:
-             legend_html = """
-                <div class='map-legend'>
-                    <span class='legend-title'>Post-Thinning</span>
-                    <div class='legend-item'><span class='legend-dot' style='background: #3CB482;'></span>Remaining Stock</div>
-                </div>
-            """
-        st.markdown(legend_html, unsafe_allow_html=True)
-
-    else:
-        st.warning("No trees visible. Try adjusting the filter.")
+    # ==========================================
+    # 5. LOGIC & LAYERS
+    # ==========================================
     
-    st.markdown("---")
-    col_n1, col_n2 = st.columns([1, 1])
-    with col_n1:
-        if st.button("⬅️ Back to Dashboard"): st.switch_page("pages/0_Dashboard.py")
-    with col_n2:
-        if st.button("Go to Growth Trends ➡️"): st.switch_page("pages/2_Individual_Growth.py")
+    # --- COLOR GENERATOR ---
+    def get_color(row):
+        tid = str(row[COL_ID])
+        is_candidate = tid in thinning_ids
+        alpha = int(opacity * 255)
+
+        # 1. SEARCH HIGHLIGHT (Cyan - Always Top Priority)
+        if tid == str(search_tag):
+            return [0, 255, 255, 255] 
+
+        # 2. POST-THINNING MODE (Hide Candidates)
+        if "Post-Thinning" in color_mode:
+            if is_candidate:
+                return [0, 0, 0, 0] # Invisible
+            else:
+                return [50, 200, 100, alpha] # Healthy Green
+
+        # 3. THINNING CANDIDATES MODE (Red vs Green)
+        if "Thinning" in color_mode:
+            if is_candidate:
+                return [255, 0, 0, 255] # Red (Full Opacity)
+            else:
+                return [50, 200, 100, alpha] # Green
+
+        # 4. MORTALITY RISK MODE (Heatmap)
+        if "Mortality" in color_mode:
+            risk = row.get('Mortality_Risk', 0)
+            if risk > 0.5: return [255, 0, 0, alpha]     # High Risk (Red)
+            if risk > 0.2: return [255, 165, 0, alpha]   # Med Risk (Orange)
+            return [50, 200, 100, alpha]                 # Low Risk (Green)
+
+        return [50, 200, 100, alpha]
+
+    map_df['color'] = map_df.apply(get_color, axis=1)
+    
+    # --- SORTING FIX ---
+    # We MUST draw green trees first, then red trees on top.
+    # 0 = Green, 1 = Red, 2 = Selected
+    map_df['sort_priority'] = 0
+    map_df.loc[map_df[COL_ID].astype(str).isin(thinning_ids), 'sort_priority'] = 1
+    if str(search_tag) != "None":
+        map_df.loc[map_df[COL_ID].astype(str) == str(search_tag), 'sort_priority'] = 2
+        
+    map_df = map_df.sort_values('sort_priority', ascending=True)
+
+    # --- ISOLATE MODE ---
+    if isolate_mode:
+        # Hide everything that isn't a candidate or selected
+        map_df = map_df[map_df['sort_priority'] > 0]
+
+    layers = []
+
+    # LAYER A: 3D TREES (Base Layer)
+    # Renders the forest structure
+    layer_trees = pdk.Layer(
+        "SimpleMeshLayer",
+        data=map_df,
+        mesh="https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/trips/tree.obj",
+        get_position=["lon", "lat"],
+        get_color="color",
+        get_orientation=[0, 0, 90],
+        get_scale=[1, 1, 1],
+        size_scale=30, 
+        pickable=True,
+    )
+    layers.append(layer_trees)
+
+    # LAYER B: 2D DOTS (Overlay Layer)
+    # Renders distinct dots ON TOP so you can see the 75 candidates clearly
+    layer_dots = pdk.Layer(
+        "ScatterplotLayer",
+        data=map_df,
+        get_position=["lon", "lat"],
+        get_fill_color="color",
+        get_radius=5, # Fixed size for visibility
+        radius_min_pixels=3,
+        pickable=True,
+        stroked=True,
+        get_line_color=[255, 255, 255, 100],
+        line_width_min_pixels=1
+    )
+    layers.append(layer_dots)
+
+    # LAYER C: SEARCH HIGHLIGHT (Pulsing Ring)
+    if search_tag != "None":
+        highlight_df = map_df[map_df[COL_ID].astype(str) == str(search_tag)]
+        if not highlight_df.empty:
+            layers.append(pdk.Layer(
+                "ScatterplotLayer",
+                data=highlight_df,
+                get_position=["lon", "lat"],
+                get_fill_color=[0, 0, 0, 0],
+                get_line_color=[0, 255, 255, 255],
+                get_radius=15,
+                radius_min_pixels=10,
+                stroked=True,
+                line_width_min_pixels=3
+            ))
+
+    # ==========================================
+    # 6. RENDER MAP
+    # ==========================================
+    if search_tag != "None" and not filtered_df[filtered_df[COL_ID].astype(str) == str(search_tag)].empty:
+        target = filtered_df[filtered_df[COL_ID].astype(str) == str(search_tag)].iloc[0]
+        view_state = pdk.ViewState(latitude=target['lat'], longitude=target['lon'], zoom=19, pitch=45)
+        st.toast(f"📍 Found Tree {search_tag}")
+    else:
+        view_state = pdk.ViewState(latitude=PASOH_LAT, longitude=PASOH_LON, zoom=16, pitch=45)
+
+    tooltip = {"html": "<b>ID:</b> {TAG}<br><b>Species:</b> {SP}<br><b>DBH:</b> {D05} cm"}
+
+    r = pdk.Deck(
+        layers=layers,
+        initial_view_state=view_state,
+        map_provider="mapbox",
+        map_style="mapbox://styles/mapbox/satellite-v9",
+        api_keys={"mapbox": MAPBOX_KEY},
+        tooltip=tooltip
+    )
+    
+    st.pydeck_chart(r, use_container_width=True)
 
 else:
-    st.warning("⚠️ Data not loaded.")
-
-    # TEMPORARY DEBUGGING
-
-try:
-
-    token_check = st.secrets["mapbox"]["token"]
-
-    st.success(f"✅ Key Loaded: {token_check[:10]}...") # Shows first 10 chars
-
-except Exception as e:
-
-    st.error(f"❌ Key Error: {e}")
-
-    st.info("Make sure .streamlit/secrets.toml exists and has [mapbox] token = '...'")
-
-    st.stop()
+    st.info("👋 Please load your data on the Home Page first.")

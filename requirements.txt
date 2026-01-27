@@ -7,3 +7,6 @@ altair
 numpy
 xgboost
 pydeck
+matplotlib
+seaborn
+tensorflow   

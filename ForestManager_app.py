@@ -8,11 +8,8 @@ from src.config import DATA_FILENAME, DEFAULT_MIN_DBH
 # 1. GLOBAL CONFIGURATION (Must be first)
 st.set_page_config(page_title="ForestManager", layout="wide")
 
-# 1. GLOBAL CONFIGURATION (Must be first)
-st.set_page_config(page_title="ForestManager", layout="wide")
-
 # ==========================================
-# 🎨 CUSTOM UI THEME (LOAD FROM EXTERNAL FILE)
+# 🎨 CUSTOM UI THEME
 # ==========================================
 def apply_forest_theme():
     try:
@@ -21,7 +18,6 @@ def apply_forest_theme():
     except FileNotFoundError:
         st.warning("⚠️ style.css not found. Theme not applied.")
 
-# Apply Theme Globally
 apply_forest_theme()
 
 # ==========================================
@@ -39,16 +35,13 @@ with st.sidebar:
         value=DEFAULT_MIN_DBH,
         step=0.5,
         key="global_min_dbh",
-        help="Trees smaller than this are removed from the analysis to focus on established stock and prevent skewing competition metrics."
+        help="Trees smaller than this are removed from the analysis."
     )
 
 # ==========================================
 # 3. DATA LOADING & PREDICTION
 # ==========================================
-# Load Data (Cached based on min_dbh_input)
 df = load_and_process_data(DATA_FILENAME, min_dbh_input)
-
-# Load Models
 model_grow, model_mort, encoder = load_model_resources()
 
 # Run AI Predictions if needed
@@ -77,11 +70,18 @@ def landing_page():
         st.markdown("### 👋 Welcome")
         tree_count = len(df) if df is not None else 0
         
+        # --- EXPANDED INTRODUCTION HERE ---
         st.markdown(
             f"""
-            **ForestManager** is an AI-powered tool designed to assist foresters in optimizing 
-            forest health through data-driven **silvicultural thinning**. 
+            **ForestManager** is an advanced Digital Twin designed to assist foresters in optimizing 
+            ecosystem health through data-driven **silvicultural thinning**. 
             
+            By integrating inventory data with machine learning, this system allows you to:
+            * **Visualize Stand Structure:** Explore the forest in a 3D interactive map to identify crowding.
+            * **Simulate Growth:** Predict future tree diameter and mortality risk using XGBoost algorithms.
+            * **Compare Strategies:** Test different thinning intensities to maximize yield while maintaining biodiversity.
+            * **Benchmark AI:** Run tournaments between different algorithms (Linear Regression vs. Random Forest) to find the best predictor.
+
             **Current Data Status:**
             * **Trees Loaded:** {tree_count:,}
             * **Min DBH Filter:** {min_dbh_input} cm
@@ -91,8 +91,6 @@ def landing_page():
 
     with row1_col2:
         st.markdown("### 📍 Study Site")
-        
-        # Site Description (Condensed)
         st.caption(
             "**Pasoh Forest Reserve** (Negeri Sembilan, Malaysia). "
             "A 50-hectare lowland dipterocarp research plot managed by FRIM."
@@ -100,10 +98,7 @@ def landing_page():
 
         # MAP RENDERING
         ICON_URL = "https://img.icons8.com/plasticine/100/000000/marker.png"
-        icon_data = {
-            "url": ICON_URL,
-            "width": 128, "height": 128, "anchorY": 128
-        }
+        icon_data = {"url": ICON_URL, "width": 128, "height": 128, "anchorY": 128}
         pasoh_coords = pd.DataFrame({
             'lat': [2.982], 'lon': [102.313],
             'name': ["Pasoh Forest Reserve"],
@@ -120,20 +115,11 @@ def landing_page():
             pickable=True
         )
 
-        view_state = pdk.ViewState(
-            latitude=2.982, longitude=102.313,
-            zoom=10, pitch=0
-        )
-        
+        view_state = pdk.ViewState(latitude=2.982, longitude=102.313, zoom=10, pitch=0)
         tooltip = {"html": "<b>{name}</b>", "style": {"backgroundColor": "steelblue", "color": "white"}}
 
         st.pydeck_chart(
-            pdk.Deck(
-                map_style=None,
-                initial_view_state=view_state,
-                layers=[icon_layer],
-                tooltip=tooltip
-            ),
+            pdk.Deck(map_style=None, initial_view_state=view_state, layers=[icon_layer], tooltip=tooltip),
             use_container_width=True
         )
 
@@ -148,63 +134,32 @@ def landing_page():
             """
             1.  **Configure (Dashboard)**: Select the species group(s) and species of interest.
             2.  **Simulate**: Adjust the *Growth Percentile* and *Competition Index* sliders to define your thinning strategy.
-            3.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact on the forest structure.
-            4.  **Analyze (Individual Growth)**: Drill down into specific trees to view their historical performance, **Mortality Risk**, and predicted future growth.
+            3.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact.
+            4.  **Analyze (AI Models)**: Compare algorithms like Random Forest vs. XGBoost to validate prediction accuracy.
             """
         )
 
         st.write("")
-        st.write("") # Spacing
         if st.session_state.get('model_loaded'):
             if st.button("🏁 Start Analysis (Go to Dashboard)", type="primary", use_container_width=True):
                 st.switch_page("pages/0_Dashboard.py")
         else:
-            st.error("System Error: Data or Model could not be loaded. Please check your files.")
+            st.error("System Error: Data or Model could not be loaded.")
 
     with row2_col2:
         st.markdown("### 🧠 Understanding the Metrics")
-        
         with st.expander("📉 Predicted Growth Percentile", expanded=False):
-            st.write(
-                """
-                The AI model predicts the diameter growth of every tree for the next cycle. 
-                Filtering by **Percentile** allows you to target the slowest growers.
-                * *Example:* Selecting **20%** targets the bottom 20% of trees with the lowest predicted growth.
-                """
-            )
-
+            st.write("The AI model predicts diameter growth. Filtering by **Percentile** allows you to target the slowest growers.")
         with st.expander("⚔️ Hegyi's Competition Index (CI)", expanded=False):
-            st.write(
-                """
-                This index measures the stress a tree is under from its neighbors.
-                $$ CI_i = \sum (D_j / D_i) / DIST_{ij} $$
-                * **High CI:** The tree is small and surrounded by large, close neighbors (High Stress).
-                * **Low CI:** The tree is dominant or isolated (Low Stress).
-                """
-            )
-            
-        # CHANGED: Icon from 💀 to 🍂
+            st.write("Measures stress from neighbors. High CI = High Stress/Crowding.")
         with st.expander("🍂 Mortality Risk", expanded=False):
-            st.write(
-                """
-                The probability (0-100%) that a tree will die in the next cycle.
-                * **Safe Range (0-50%):** Likely to survive.
-                * **Critical Range (50-100%):** High risk of mortality due to competition or poor health.
-                """
-            )
-
-        # ADDED: Monte Carlo Simulation explanation
+            st.write("Probability (0-100%) that a tree will die in the next cycle.")
         with st.expander("🎲 Monte Carlo Simulation", expanded=False):
-            st.write(
-                """
-                A technique used to account for uncertainty in nature. 
-                We run the growth model multiple times with slight random variations in environmental factors to estimate a range of possible future outcomes (e.g., Optimistic vs. Pessimistic yield).
-                """
-            )
+            st.write("Runs the model multiple times with random variations to estimate uncertainty ranges.")
 
     st.markdown("---")
     st.caption("ForestManager FYP v2.0 | Powered by XGBoost & Streamlit")
-    
+
 # ==========================================
 # 5. NAVIGATION SETUP
 # ==========================================
