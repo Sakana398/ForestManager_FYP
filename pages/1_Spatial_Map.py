@@ -9,38 +9,37 @@ st.set_page_config(page_title="ForestManager | Digital Twin", layout="wide")
 st.title("🗺️ Forest Digital Twin")
 
 # ==========================================
-# 1. DIAGNOSTICS & KEY CHECK
+# 1. ROBUST KEY CHECK & FALLBACK SYSTEM
 # ==========================================
-# We initialize variables safely so the app never crashes on load
+# We default to Mapbox, but if ANYTHING is wrong, we switch to CartoDB immediately.
 map_provider = "mapbox"
 map_style = "mapbox://styles/mapbox/satellite-v9"
 mapbox_key = None
 
 try:
-    # Attempt 1: Nested Secret (Standard for [mapbox] section)
+    # Check 1: Try nested key [mapbox] token
     if "mapbox" in st.secrets and "token" in st.secrets["mapbox"]:
         mapbox_key = st.secrets["mapbox"]["token"]
-    # Attempt 2: Flat Secret
+    # Check 2: Try flat key MAPBOX_KEY
     elif "MAPBOX_KEY" in st.secrets:
         mapbox_key = st.secrets["MAPBOX_KEY"]
     
-    # Validate Key Format
+    # Check 3: Validate format
     if mapbox_key and mapbox_key.startswith("pk."):
-        pass # Key is valid
+        # Key looks good
+        pass
     else:
-        # FALLBACK: If key is missing/bad, switch to CartoDB (No key needed)
-        st.toast("⚠️ Mapbox Key missing. Switched to Backup Map.", icon="🗺️")
-        map_provider = "carto"
-        map_style = "dark"
-        mapbox_key = None
+        raise ValueError("Key missing or invalid format")
 
 except Exception as e:
-    st.error(f"🚨 Secrets Error: {e}")
+    # 🛡️ FAIL-SAFE MODE: Switch to free CartoDB map so it's never blank
     map_provider = "carto"
     map_style = "dark"
+    mapbox_key = None
+    st.toast("⚠️ Mapbox Key Issue. Switched to Backup Map.", icon="🗺️")
 
 # ==========================================
-# 2. DATA LOADING & AUTO-FIX
+# 2. DATA PREP & AUTO-CORRECTION
 # ==========================================
 PASOH_LAT = 2.9788
 PASOH_LON = 102.3131
@@ -48,13 +47,8 @@ PASOH_LON = 102.3131
 if 'df' in st.session_state:
     raw_df = st.session_state['df'].copy()
     
-    # Check if data exists
-    if raw_df.empty:
-        st.error("⚠️ Data loaded but empty.")
-        st.stop()
-
-    # COORDINATE LOGIC (Auto-Detect Meters vs GPS)
-    # If X > 180, it's Meters -> Convert to GPS. If X < 180, it's already GPS.
+    # 🌍 COORDINATE FIX (Silent)
+    # If X > 180, it's Meters -> Convert. Else it's GPS.
     meters_per_deg = 111139.0
     if raw_df[COL_X].max() > 180:
         raw_df['lon'] = PASOH_LON + (raw_df[COL_X] / meters_per_deg)
@@ -63,8 +57,8 @@ if 'df' in st.session_state:
         raw_df['lon'] = raw_df[COL_X]
         raw_df['lat'] = raw_df[COL_Y]
 
-    # Clean invalid rows
-    raw_df = raw_df.dropna(subset=['lon', 'lat'])
+    # 🧹 CRITICAL CLEANUP: Remove NaNs that silently crash the map
+    raw_df = raw_df.dropna(subset=['lon', 'lat', COL_ID])
 
     # Load Thinning Data
     thinning_ids = set()
@@ -72,7 +66,7 @@ if 'df' in st.session_state:
          thinning_ids = set(st.session_state['df_thinning_recs'][COL_ID].astype(str))
 
     # ==========================================
-    # 3. FILTERS (Top Row - Preserved)
+    # 3. UI LAYOUT (Preserved)
     # ==========================================
     c1, c2, c3 = st.columns([1.5, 1.5, 1.5])
     
@@ -84,8 +78,6 @@ if 'df' in st.session_state:
                 if not candidates.empty:
                     st.session_state['map_search_tag'] = candidates.sample(1).iloc[0][COL_ID]
                     st.rerun()
-                else:
-                    st.warning("No candidates found in current view.")
         else:
             st.button("✨ Find Tree...", disabled=True, use_container_width=True)
 
@@ -103,18 +95,16 @@ if 'df' in st.session_state:
             
         available_tags = sorted(filtered_df[COL_ID].unique())
         
-        # Handle Selection
         default_idx = 0
         if 'map_search_tag' in st.session_state and st.session_state['map_search_tag'] in available_tags:
             default_idx = available_tags.index(st.session_state['map_search_tag'])
             
-        search_tag = st.selectbox("Tag", ["None"] + available_tags, index=default_idx if 'map_search_tag' in st.session_state else 0, label_visibility="collapsed")
+        search_tag = st.selectbox("Tag", ["None"] + available_tags, index=default_idx, label_visibility="collapsed")
 
-    # Apply Filters
     map_df = filtered_df.copy()
 
     # ==========================================
-    # 4. MAP SETTINGS (Expander - Preserved)
+    # 4. SETTINGS (Preserved)
     # ==========================================
     with st.expander("🛠️ Map Settings", expanded=True):
         sc1, sc2, sc3 = st.columns([1.2, 1, 1])
@@ -134,16 +124,15 @@ if 'df' in st.session_state:
         with sc3:
             st.write("**Visuals:**")
             opacity = st.slider("Canopy Opacity:", 0.1, 1.0, 0.8)
-            isolate_mode = st.checkbox("🔍 Isolate Red Dots (Hide Green)", value=False)
+            isolate_mode = st.checkbox("🔍 Isolate Red Dots", value=False)
 
-    # Filter by Size
     map_df = map_df[map_df[COL_CURRENT] >= min_dbh]
 
     # ==========================================
-    # 5. LAYERS & RENDER LOGIC
+    # 5. RENDERING LAYERS
     # ==========================================
     
-    # --- COLORS ---
+    # Colors
     def get_color(row):
         tid = str(row[COL_ID])
         is_candidate = tid in thinning_ids
@@ -152,12 +141,12 @@ if 'df' in st.session_state:
         if tid == str(search_tag): return [0, 255, 255, 255] # Cyan
         
         if "Post-Thinning" in color_mode:
-            if is_candidate: return [0, 0, 0, 0] # Invisible
-            return [50, 200, 100, alpha] # Green
+            if is_candidate: return [0, 0, 0, 0]
+            return [50, 200, 100, alpha]
 
         if "Thinning" in color_mode:
-            if is_candidate: return [255, 0, 0, 255] # Red
-            return [50, 200, 100, alpha] # Green
+            if is_candidate: return [255, 0, 0, 255]
+            return [50, 200, 100, alpha]
 
         if "Mortality" in color_mode:
             risk = row.get('Mortality_Risk', 0)
@@ -169,7 +158,7 @@ if 'df' in st.session_state:
 
     map_df['color'] = map_df.apply(get_color, axis=1)
     
-    # Sorting (Red on top of Green)
+    # Sorting
     map_df['sort_priority'] = 0
     map_df.loc[map_df[COL_ID].astype(str).isin(thinning_ids), 'sort_priority'] = 1
     if str(search_tag) != "None":
@@ -181,7 +170,7 @@ if 'df' in st.session_state:
 
     layers = []
 
-    # LAYER A: 3D TREES
+    # Layer A: 3D Trees
     layers.append(pdk.Layer(
         "SimpleMeshLayer",
         data=map_df,
@@ -194,7 +183,7 @@ if 'df' in st.session_state:
         pickable=True,
     ))
 
-    # LAYER B: 2D DOTS (For Visibility)
+    # Layer B: 2D Dots
     layers.append(pdk.Layer(
         "ScatterplotLayer",
         data=map_df,
@@ -208,46 +197,29 @@ if 'df' in st.session_state:
         line_width_min_pixels=1
     ))
 
-    # LAYER C: HIGHLIGHT RING
+    # Camera
     if search_tag != "None":
-        highlight_df = map_df[map_df[COL_ID].astype(str) == str(search_tag)]
-        if not highlight_df.empty:
-            layers.append(pdk.Layer(
-                "ScatterplotLayer",
-                data=highlight_df,
-                get_position=["lon", "lat"],
-                get_fill_color=[0, 0, 0, 0],
-                get_line_color=[0, 255, 255, 255],
-                get_radius=15,
-                radius_min_pixels=10,
-                stroked=True,
-                line_width_min_pixels=3
-            ))
-
-    # CAMERA
-    if search_tag != "None" and not filtered_df[filtered_df[COL_ID].astype(str) == str(search_tag)].empty:
-        target = filtered_df[filtered_df[COL_ID].astype(str) == str(search_tag)].iloc[0]
-        view_state = pdk.ViewState(latitude=target['lat'], longitude=target['lon'], zoom=19, pitch=45)
+        target = filtered_df[filtered_df[COL_ID].astype(str) == str(search_tag)]
+        if not target.empty:
+            view_state = pdk.ViewState(latitude=target.iloc[0]['lat'], longitude=target.iloc[0]['lon'], zoom=19, pitch=45)
+        else:
+            view_state = pdk.ViewState(latitude=PASOH_LAT, longitude=PASOH_LON, zoom=16, pitch=45)
     else:
         view_state = pdk.ViewState(latitude=PASOH_LAT, longitude=PASOH_LON, zoom=16, pitch=45)
 
-    tooltip = {"html": "<b>ID:</b> {TAG}<br><b>Species:</b> {SP}<br><b>DBH:</b> {D05} cm"}
+    tooltip = {"html": "<b>ID:</b> {TAG}<br><b>Species:</b> {SP}"}
 
-    # RENDER WITH FALLBACK
+    # FAIL-SAFE RENDER
     try:
         r = pdk.Deck(
             layers=layers,
             initial_view_state=view_state,
-            map_provider=map_provider, # Logic handles fallback automatically
+            map_provider=map_provider,
             map_style=map_style,
             api_keys={"mapbox": mapbox_key} if mapbox_key else None,
             tooltip=tooltip
         )
         st.pydeck_chart(r, use_container_width=True)
-        
-        if map_provider == "carto":
-            st.caption("ℹ️ Using Backup Map (Mapbox Key not detected).")
-
     except Exception as e:
         st.error(f"Render Error: {e}")
 
