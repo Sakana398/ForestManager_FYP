@@ -18,6 +18,72 @@ if 'df' in st.session_state:
     df = st.session_state['df']
 
     # ==========================================
+    # 0. GLOBAL RISK ASSESSMENT (MOVED TO TOP)
+    # ==========================================
+    if 'Mortality_Risk' in df.columns and not df.empty:
+        st.subheader("🎲 Baseline Risk Assessment")
+        st.markdown("**Projected Survival Analysis (Status Quo)**")
+        
+        with st.expander("Run Monte Carlo Simulation (100 Iterations)", expanded=True):
+            st.write("This simulation predicts the number of **surviving trees** over the next period based on current Mortality Risk profiles, assuming no intervention.")
+            
+            if st.button("🚀 Run Risk Simulation"):
+                # 1. Setup
+                n_simulations = 100
+                results = []
+                total_trees = len(df)
+                
+                # Progress bar
+                progress_bar = st.progress(0)
+                
+                # 2. Run Loop (Vectorized for Speed)
+                probs = df['Mortality_Risk'].values
+                
+                for i in range(n_simulations):
+                    # Generate random number 0.0 to 1.0 for every tree
+                    random_rolls = np.random.rand(total_trees)
+                    
+                    # If Random Roll > Risk, Tree Survives
+                    survivors = random_rolls > probs
+                    
+                    # Calculate surviving COUNT (not biomass)
+                    surviving_count = np.sum(survivors)
+                    
+                    results.append(surviving_count)
+                    progress_bar.progress((i + 1) / n_simulations)
+                    
+                # 3. Visualize Results (Histogram)
+                results = np.array(results)
+                
+                # Calculate Confidence Intervals
+                worst_case = np.percentile(results, 5) # 5th percentile
+                best_case = np.percentile(results, 95) # 95th percentile
+                avg_case = np.mean(results)
+                
+                mc_col1, mc_col2 = st.columns([1, 2])
+                
+                with mc_col1:
+                    st.markdown("##### Predicted Surviving Trees")
+                    st.success(f"**Best Case (95%):**\n{int(best_case):,} Trees")
+                    st.info(f"**Likely Outcome:**\n{int(avg_case):,} Trees")
+                    st.error(f"**Worst Case (5%):**\n{int(worst_case):,} Trees")
+                    st.caption(f"Starting Count: {total_trees:,} Trees")
+                    
+                with mc_col2:
+                    # Simple Histogram using Altair
+                    hist_data = pd.DataFrame({'Surviving Trees': results})
+                    
+                    chart = alt.Chart(hist_data).mark_bar().encode(
+                        alt.X("Surviving Trees", bin=alt.Bin(maxbins=20), title="Number of Surviving Trees"),
+                        y=alt.Y('count()', title="Frequency"),
+                        tooltip=['count()']
+                    ).properties(title="Distribution of Survival Outcomes")
+                    
+                    st.altair_chart(chart, use_container_width=True)
+    
+    st.divider()
+
+    # ==========================================
     # 1. CONFIGURATION
     # ==========================================
     st.markdown("### 🛠️ Configuration")
@@ -161,99 +227,25 @@ if 'df' in st.session_state:
             # ==========================================
             # 3. RESULTS
             # ==========================================
-            st.subheader("📊 Simulation Results")
+            st.subheader("📊 Thinning Strategy Results")
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
             
             m_col1.metric("Candidates for Removal", f"{len(df_thinning)} Trees")
             m_col2.metric("Growth Cutoff", f"≤ {growth_thresh:.3f}")
             m_col3.metric("Competition Floor", f"{ci_level_selected} (≥ {ci_limit})")
             m_col4.metric(
-                "Avg. Mortality Risk", 
+                "Avg. Mortality Risk (Candidates)", 
                 f"{avg_risk:.1f}%", 
                 delta="High Risk" if avg_risk > 50 else "Normal",
                 delta_color="inverse" if avg_risk > 50 else "normal"
             )
 
             # ==========================================
-            # 🆕 MONTE CARLO RISK ASSESSMENT
-            # ==========================================
-            if not df_thinning.empty:
-                st.markdown("---")
-                st.subheader("🎲 Monte Carlo Risk Assessment")
-                
-                with st.expander("Run Monte Carlo Simulation (100 Iterations)", expanded=False):
-                    st.write("This simulation 'rolls the dice' for every tree based on its Mortality Risk to predict the range of possible remaining stock.")
-                    
-                    if st.button("🚀 Run Simulation"):
-                        if 'Mortality_Risk' in df_thinning.columns:
-                            
-                            # 1. Setup
-                            n_simulations = 100
-                            results = []
-                            total_trees = len(df_thinning)
-                            
-                            # Progress bar
-                            progress_bar = st.progress(0)
-                            
-                            # 2. Run Loop (Vectorized for Speed)
-                            probs = df_thinning['Mortality_Risk'].values
-                            
-                            # We simulate the surviving biomass (Stock)
-                            # Assuming you want to know how much stock remains if you DON'T thin them (Status Quo risk)
-                            # Or if you DO thin them (Removal). 
-                            # Usually MC is used to see "How many of these candidates will die anyway?"
-                            
-                            current_vals = df_thinning[COL_CURRENT].values
-                            
-                            for i in range(n_simulations):
-                                # Generate random number 0.0 to 1.0 for every tree
-                                random_rolls = np.random.rand(total_trees)
-                                
-                                # If Random Roll > Risk, Tree Survives
-                                survivors = random_rolls > probs
-                                
-                                # Calculate surviving biomass of this specific group
-                                surviving_biomass = np.sum(current_vals[survivors])
-                                
-                                results.append(surviving_biomass)
-                                progress_bar.progress((i + 1) / n_simulations)
-                                
-                            # 3. Visualize Results (Histogram)
-                            results = np.array(results)
-                            
-                            # Calculate Confidence Intervals
-                            worst_case = np.percentile(results, 5) # 5th percentile
-                            best_case = np.percentile(results, 95) # 95th percentile
-                            avg_case = np.mean(results)
-                            
-                            mc_col1, mc_col2 = st.columns([1, 2])
-                            
-                            with mc_col1:
-                                st.markdown("##### Predicted Survivor Stock")
-                                st.success(f"**Best Case (95%):**\n{best_case:,.0f} cm total DBH")
-                                st.info(f"**Likely Outcome:**\n{avg_case:,.0f} cm total DBH")
-                                st.error(f"**Worst Case (5%):**\n{worst_case:,.0f} cm total DBH")
-                                
-                            with mc_col2:
-                                # Simple Histogram using Altair
-                                hist_data = pd.DataFrame({'Total Biomass (DBH Sum)': results})
-                                
-                                chart = alt.Chart(hist_data).mark_bar().encode(
-                                    alt.X("Total Biomass (DBH Sum)", bin=alt.Bin(maxbins=20), title="Total Remaining Biomass (cm)"),
-                                    y=alt.Y('count()', title="Frequency"),
-                                    tooltip=['count()']
-                                ).properties(title="Distribution of Probabilistic Outcomes")
-                                
-                                st.altair_chart(chart, use_container_width=True)
-                        else:
-                            st.error("Model must include Mortality Risk for Monte Carlo simulation.")
-
-            # ==========================================
             # 4. EXPORT & TABLE
             # ==========================================
             if not df_thinning.empty:
                 st.markdown("---")
-                st.success(f"Strategy identified **{len(df_thinning)}** trees.")
+                st.success(f"**{len(df_thinning)}** trees identified for thinning.")
                 
                 csv = df_thinning.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, 'thinning_candidates.csv', 'text/csv', type="primary")

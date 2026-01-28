@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import joblib
 import warnings
-from xgboost import XGBRegressor, XGBClassifier
+# [UPDATED] Import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor 
+from xgboost import XGBClassifier # Keep XGBClassifier for Mortality (it's good for imbalanced data)
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_squared_error, r2_score, accuracy_score
 from sklearn.preprocessing import LabelEncoder
@@ -56,7 +58,7 @@ features = [
 ]
 
 # ==========================================
-# 3. PREPARE DATASETS (CRITICAL FIX)
+# 3. PREPARE DATASETS
 # ==========================================
 # Filter 1: Base Valid Data (Must have coordinates and current size)
 df_base = df.dropna(subset=[COL_X, COL_Y, COL_CURRENT, 'Competition_Index']).copy()
@@ -82,8 +84,9 @@ print(f"   Training Mortality on: {len(df_mortality)} trees (Dead: {df_mortality
 print(f"   Training Growth on:    {len(df_growth)} trees")
 
 # ==========================================
-# 4. TRAIN MORTALITY MODEL
+# 4. TRAIN MORTALITY MODEL (XGBoost Classifier)
 # ==========================================
+# We keep XGBoost for classification as it handles class imbalance very well
 print("\n💀 Training Mortality Risk Model...")
 
 X_mort = df_mortality[features]
@@ -104,7 +107,7 @@ else:
         max_depth=6, 
         scale_pos_weight=weight, # Balance classes
         eval_metric='logloss',
-        base_score=0.5 # Fix for some XGBoost versions
+        base_score=0.5
     )
     clf.fit(X_mort, y_mort)
 
@@ -114,25 +117,27 @@ acc = accuracy_score(y_mort, preds)
 print(f"   - Accuracy: {acc:.2%}")
 
 # ==========================================
-# 5. TUNE GROWTH MODEL (Survivors)
+# 5. TUNE GROWTH MODEL (Random Forest)
 # ==========================================
-print("\n📈 Tuning Growth Model (Grid Search)...")
+print("\n📈 Tuning Growth Model (Random Forest Grid Search)...")
 
 X_grow = df_growth[features]
 y_grow = df_growth['Target_Growth']
 
 if len(df_growth) > 50:
+    # [UPDATED] Parameters suitable for Random Forest
     param_grid = {
         'n_estimators': [100, 200],
-        'learning_rate': [0.05, 0.1],
-        'max_depth': [4, 6],
-        'subsample': [0.8, 1.0]
+        'max_depth': [10, 20, None],       # RF can handle deeper trees than Boosting
+        'min_samples_split': [2, 5, 10],   # Prevents overfitting
+        'min_samples_leaf': [1, 2, 4]      # Smoothes the predictions
     }
 
-    xgb = XGBRegressor(random_state=RANDOM_STATE, n_jobs=-1)
+    # [UPDATED] Switch to RandomForestRegressor
+    rf = RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=-1)
 
     grid = GridSearchCV(
-        estimator=xgb,
+        estimator=rf,
         param_grid=param_grid,
         scoring='neg_mean_squared_error',
         cv=3,
@@ -152,7 +157,7 @@ if len(df_growth) > 50:
     print(f"   - R² Score: {r2:.4f}")
 else:
     print("   ⚠️ Not enough data for GridSearch. Training simple model.")
-    best_model = XGBRegressor(n_estimators=100)
+    best_model = RandomForestRegressor(n_estimators=100, random_state=RANDOM_STATE)
     best_model.fit(X_grow, y_grow)
 
 # ==========================================

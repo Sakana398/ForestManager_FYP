@@ -221,8 +221,6 @@ def run_predictions(
             
     return df
 
-# src/utils.py (Add to the end of the file)
-
 def load_css(file_name="style.css"):
     """
     Loads a local CSS file and injects it into the Streamlit app.
