@@ -10,21 +10,26 @@ st.set_page_config(page_title="ForestManager | Digital Twin", layout="wide")
 st.title("🗺️ Forest Digital Twin")
 
 # ==========================================
-# 1. MAPBOX KEY (HARDCODED FOR TESTING)
+# 1. MAPBOX KEY SETUP (Simplified)
 # ==========================================
-# ⚠️ WARNING: DO NOT COMMIT THIS FILE TO GITHUB WITH THE REAL KEY!
-# ⚠️ REVERT THIS CHANGE AFTER TESTING.
+map_provider = "mapbox"
+map_style = "mapbox://styles/mapbox/satellite-v9"
+mapbox_key = None
 
-# PASTE YOUR KEY INSIDE THE QUOTES BELOW 👇
-mapbox_key = "pk.eyJ1Ijoic2FrYW5hMzk4IiwiYSI6ImNta3NzeGdxNDFjemQzZ3M2ZXZjc2JuNDcifQ.Ny6co_PmooD3biKA6yEXDQ" 
+# OPTION A: Hardcode for testing (Uncomment if secrets fail)
+# mapbox_key = "pk.eyJ1Ijo..." 
 
-if mapbox_key:
-    map_provider = "mapbox"
-    map_style = "mapbox://styles/mapbox/satellite-v9"
-else:
+# OPTION B: Load from Secrets (Flat Key Only)
+if not mapbox_key:
+    if "MAPBOX_KEY" in st.secrets:
+        mapbox_key = st.secrets["MAPBOX_KEY"]
+
+# Validation
+if not mapbox_key:
+    # Fail-safe: Switch to CartoDB if key is missing
     map_provider = "carto"
     map_style = "dark"
-    st.warning("⚠️ No Mapbox Key provided. Using backup map.")
+    st.toast("⚠️ Mapbox Key missing. Switched to Backup Map.", icon="🗺️")
 
 # ==========================================
 # 2. DATA PREP
@@ -33,6 +38,7 @@ if 'df' in st.session_state:
     raw_df = st.session_state['df'].copy()
     
     # 🧹 USE UTILITY FUNCTION (Fixes Coordinates Automatically)
+    # This ensures trees land in Pasoh, not the ocean.
     raw_df = standardize_coordinates(raw_df)
 
     # Remove rows that would crash the map
@@ -215,10 +221,13 @@ if 'df' in st.session_state:
             initial_view_state=view_state,
             map_provider=map_provider,
             map_style=map_style,
-            api_keys={"mapbox": mapbox_key}, # Passes the hardcoded key
+            api_keys={"mapbox": mapbox_key} if mapbox_key else None,
             tooltip=tooltip
         )
         st.pydeck_chart(r, use_container_width=True)
+        
+        if map_provider == "carto":
+            st.caption("ℹ️ Using Backup Map (Mapbox Key not detected).")
 
     except Exception as e:
         st.error(f"Render Error: {e}")
