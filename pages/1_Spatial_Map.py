@@ -101,13 +101,22 @@ if 'df' in st.session_state:
             st.write("**Color Mode:**")
             color_mode = st.radio(
                 "Color Mode", 
-                ["Thinning Candidates (Action)", "Mortality Risk (Heatmap)", "Post-Thinning Scenario"], 
+                ["Thinning Candidates (Action)", "Post-Thinning Scenario", "Mortality Risk (Heatmap)"], 
                 label_visibility="collapsed"
             )
             
         with sc2:
             st.write("**Filters:**")
             min_dbh = st.slider("Hide Small Trees (< cm):", 0, 50, 0) # Default 0 to show ALL trees
+            
+            # [NEW] Dynamic Risk Filter
+            selected_risk_levels = ["Low", "Medium", "High"] # Default to all
+            if "Mortality" in color_mode:
+                selected_risk_levels = st.multiselect(
+                    "Show Risk Levels:",
+                    ["Low", "Medium", "High"],
+                    default=["Low", "Medium", "High"]
+                )
 
         with sc3:
             st.write("**Visuals:**")
@@ -116,6 +125,23 @@ if 'df' in st.session_state:
 
     # Filter by Size
     map_df = map_df[map_df[COL_CURRENT] >= min_dbh]
+
+    # [NEW] Filter by Risk Level (only in Mortality Mode)
+    if "Mortality" in color_mode:
+        if 'Mortality_Risk' not in map_df.columns:
+            map_df['Mortality_Risk'] = 0.0
+            
+        # Build Filter Condition
+        risk_condition = pd.Series(False, index=map_df.index)
+        
+        if "High" in selected_risk_levels:
+            risk_condition |= (map_df['Mortality_Risk'] > 0.5)
+        if "Medium" in selected_risk_levels:
+            risk_condition |= ((map_df['Mortality_Risk'] > 0.2) & (map_df['Mortality_Risk'] <= 0.5))
+        if "Low" in selected_risk_levels:
+            risk_condition |= (map_df['Mortality_Risk'] <= 0.2)
+            
+        map_df = map_df[risk_condition]
 
     # ==========================================
     # 5. LAYERS & LOGIC
@@ -143,55 +169,62 @@ if 'df' in st.session_state:
         # 4. Mortality Heatmap
         if "Mortality" in color_mode:
             risk = row.get('Mortality_Risk', 0)
-            if risk > 0.5: return [255, 0, 0, alpha]
-            if risk > 0.2: return [255, 165, 0, alpha]
+            if risk > 0.5: return [255, 0, 0, alpha]     # Red (High)
+            if risk > 0.2: return [255, 165, 0, alpha]   # Orange/Yellow (Medium)
+            return [50, 200, 100, alpha]                 # Green (Low)
         
         return [50, 200, 100, alpha]
 
-    map_df['color'] = map_df.apply(get_color, axis=1)
-    
-    # --- SORTING (Critical for Red Dots Visibility) ---
-    # Draw Green (0) -> Red (1) -> Selected (2)
-    map_df['sort_priority'] = 0
-    map_df.loc[map_df[COL_ID].astype(str).isin(thinning_ids), 'sort_priority'] = 1
-    if str(search_tag) != "None":
-        map_df.loc[map_df[COL_ID].astype(str) == str(search_tag), 'sort_priority'] = 2
+    if not map_df.empty:
+        map_df['color'] = map_df.apply(get_color, axis=1)
         
-    map_df = map_df.sort_values('sort_priority', ascending=True)
+        # --- SORTING (Critical for Red Dots Visibility) ---
+        # Draw Green (0) -> Red (1) -> Selected (2)
+        map_df['sort_priority'] = 0
+        map_df.loc[map_df[COL_ID].astype(str).isin(thinning_ids), 'sort_priority'] = 1
+        if str(search_tag) != "None":
+            map_df.loc[map_df[COL_ID].astype(str) == str(search_tag), 'sort_priority'] = 2
+            
+        map_df = map_df.sort_values('sort_priority', ascending=True)
 
-    # --- ISOLATE MODE ---
-    if isolate_mode:
-        # Hide everything except candidates and selection
-        map_df = map_df[map_df['sort_priority'] > 0]
+        # --- ISOLATE MODE ---
+        if isolate_mode:
+            # Hide everything except candidates and selection
+            map_df = map_df[map_df['sort_priority'] > 0]
+    
+    else:
+        if "Mortality" in color_mode and not selected_risk_levels:
+             st.warning("⚠️ Please select at least one Risk Level to see trees.")
 
     layers = []
 
-    # Layer A: 3D TREES (Base Layer)
-    layers.append(pdk.Layer(
-        "SimpleMeshLayer",
-        data=map_df,
-        mesh="https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/trips/tree.obj",
-        get_position=["lon", "lat"],
-        get_color="color",
-        get_orientation=[0, 0, 90],
-        get_scale=[1, 1, 1],
-        size_scale=30, 
-        pickable=True,
-    ))
+    if not map_df.empty:
+        # Layer A: 3D TREES (Base Layer)
+        layers.append(pdk.Layer(
+            "SimpleMeshLayer",
+            data=map_df,
+            mesh="https://raw.githubusercontent.com/visgl/deck.gl-data/master/examples/trips/tree.obj",
+            get_position=["lon", "lat"],
+            get_color="color",
+            get_orientation=[0, 0, 90],
+            get_scale=[1, 1, 1],
+            size_scale=30, 
+            pickable=True,
+        ))
 
-    # Layer B: 2D DOTS (Overlay for Visibility)
-    layers.append(pdk.Layer(
-        "ScatterplotLayer",
-        data=map_df,
-        get_position=["lon", "lat"],
-        get_fill_color="color",
-        get_radius=5,
-        radius_min_pixels=3,
-        pickable=True,
-        stroked=True,
-        get_line_color=[255, 255, 255, 100],
-        line_width_min_pixels=1
-    ))
+        # Layer B: 2D DOTS (Overlay for Visibility)
+        layers.append(pdk.Layer(
+            "ScatterplotLayer",
+            data=map_df,
+            get_position=["lon", "lat"],
+            get_fill_color="color",
+            get_radius=5,
+            radius_min_pixels=3,
+            pickable=True,
+            stroked=True,
+            get_line_color=[255, 255, 255, 100],
+            line_width_min_pixels=1
+        ))
 
     # ==========================================
     # 6. CAMERA & RENDER
@@ -199,21 +232,38 @@ if 'df' in st.session_state:
     PASOH_ANCHOR = {"latitude": 2.9788, "longitude": 102.3131, "zoom": 16, "pitch": 45}
     
     # Auto-Zoom Logic
-    if search_tag != "None":
+    # 1. Base location: Average of displayed data
+    if not map_df.empty:
+        init_lat = map_df['lat'].mean()
+        init_lon = map_df['lon'].mean()
+        init_zoom = 16
+    else:
+        init_lat = PASOH_ANCHOR["latitude"]
+        init_lon = PASOH_ANCHOR["longitude"]
+        init_zoom = PASOH_ANCHOR["zoom"]
+
+    # 2. Override if specific tree search
+    if str(search_tag) != "None":
         target = filtered_df[filtered_df[COL_ID].astype(str) == str(search_tag)]
         if not target.empty:
-            view_state = pdk.ViewState(
-                latitude=target.iloc[0]['lat'], 
-                longitude=target.iloc[0]['lon'], 
-                zoom=19, pitch=45
-            )
+            init_lat = target.iloc[0]['lat']
+            init_lon = target.iloc[0]['lon']
+            init_zoom = 19
             st.toast(f"📍 Found Tree {search_tag}")
-        else:
-            view_state = pdk.ViewState(**PASOH_ANCHOR)
-    else:
-        view_state = pdk.ViewState(**PASOH_ANCHOR)
+    
+    view_state = pdk.ViewState(
+        latitude=init_lat,
+        longitude=init_lon,
+        zoom=init_zoom,
+        pitch=PASOH_ANCHOR["pitch"]
+    )
 
     tooltip = {"html": "<b>ID:</b> {TAG}<br><b>Species:</b> {SP}<br><b>DBH:</b> {D05} cm"}
+    
+    if not map_df.empty:
+        map_df['TAG'] = map_df[COL_ID]
+        map_df['SP'] = map_df[COL_SPECIES]
+        map_df['D05'] = map_df[COL_CURRENT]
 
     try:
         r = pdk.Deck(
