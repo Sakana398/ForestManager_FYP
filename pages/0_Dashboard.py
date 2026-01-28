@@ -7,7 +7,7 @@ from src.config import *
 
 st.set_page_config(page_title="ForestManager | Dashboard", layout="wide")
 
-st.title("🌳 ForestManager Dashboard")
+st.title("ForestManager Dashboard")
 
 # --- HELPER: PERSIST WIDGET STATE ---
 def persist(key):
@@ -86,7 +86,7 @@ if 'df' in st.session_state:
     # ==========================================
     # 1. CONFIGURATION
     # ==========================================
-    st.markdown("### 🛠️ Configuration")
+    st.markdown("### Thinning Configuration")
     tab_data, tab_rules = st.tabs(["1️⃣ Data Selection", "2️⃣ Thinning Parameters"])
     
     with tab_data:
@@ -193,7 +193,7 @@ if 'df' in st.session_state:
     # 2. LOGIC (Wait for User Input)
     # ==========================================
     if not selected_groups and not selected_species and not use_all_species:
-        st.info("👈 **Start by selecting a Species Group or Species** in the configuration panel above.")
+        st.info("**Start by selecting a Species Group or Species** in the configuration panel above.")
         st.caption("The dashboard is waiting for your input to generate the analysis.")
         st.session_state['df_thinning_recs'] = df.head(0) 
     else:
@@ -245,7 +245,7 @@ if 'df' in st.session_state:
             # ==========================================
             if not df_thinning.empty:
                 st.markdown("---")
-                st.success(f"**{len(df_thinning)}** trees identified for thinning.")
+                st.success(f"**{len(df_thinning)}** trees identified based")
                 
                 csv = df_thinning.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, 'thinning_candidates.csv', 'text/csv', type="primary")

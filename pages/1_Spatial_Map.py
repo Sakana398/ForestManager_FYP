@@ -234,3 +234,19 @@ if 'df' in st.session_state:
 
 else:
     st.info("👋 Please load your data on the Home Page first.")
+
+# ==========================================
+# NAVIGATION
+# ==========================================
+st.markdown("---")
+col_n1, col_n2 = st.columns([1, 1])
+
+with col_n1:
+    # Go back to the Dashboard
+    if st.button("⬅️ Back to Dashboard"): 
+        st.switch_page("pages/0_Dashboard.py")
+
+with col_n2:
+    # Go forward to Individual Growth Analysis
+    if st.button("View Predicted Growth ➡️"): 
+        st.switch_page("pages/2_Individual_Growth.py")
