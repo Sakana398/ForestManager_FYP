@@ -7,7 +7,7 @@ from src.config import *
 from src.utils import standardize_coordinates
 
 st.set_page_config(page_title="ForestManager | Digital Twin", layout="wide")
-st.title("🗺️ Forest Digital Twin")
+st.title("🗺️ Spatial Map")
 
 # ==========================================
 # 1. MAPBOX KEY SETUP (Simplified)

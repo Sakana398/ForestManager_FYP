@@ -68,17 +68,17 @@ def landing_page():
             ecosystem health through data-driven **silvicultural thinning**. 
             
             By integrating inventory data with machine learning, this system allows you to:
-            * **Visualize Stand Structure:** Explore the forest in a 3D interactive map to identify crowding.
-            * **Simulate Growth:** Predict future tree diameter and mortality risk using XGBoost algorithms.
-            * **Compare Strategies:** Test different thinning intensities to maximize yield while maintaining biodiversity.
-            * **Benchmark AI:** Run tournaments between different algorithms (Linear Regression vs. Random Forest) to find the best predictor.
+            * **Assess Baseline Risk**: Quantify the "Risk of Inaction" and estimate survivor stock using Monte Carlo Simulations (100,000+ stochastic runs).
+            * **Optimize Thinning**: Generate spatially explicit "Cut Lists" based on biological stress (Hegyi’s Competition Index) rather than random selection.
+            * **Visualize Structure**: Explore the forest in a Interactive SPatial Map to identify overcrowding and visualize the thinning strategy before implementation.
+            * **Validate Interventions**: Predict the precise growth gain of specific trees (Status Quo vs. Post-Thinning) using a Spatially-Aware Random Forest model.
 
             **Current Data Status:**
             * **Trees Loaded:** {tree_count:,}
             * **Min DBH Filter:** {min_dbh_input} cm
             """
         )
-        st.info("👈 Use the sidebar to adjust global settings before starting.")
+        st.info("Use the sidebar to adjust global settings before starting.")
 
     with row1_col2:
         st.markdown("### 📍 Study Site")
@@ -123,10 +123,11 @@ def landing_page():
         st.markdown("### 🚀 How to Use This App")
         st.markdown(
             """
-            1.  **Configure (Dashboard)**: Select the species group(s) and species of interest.
-            2.  **Simulate**: Adjust the *Growth Percentile* and *Competition Index* sliders to define your thinning strategy.
-            3.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact.
-            4.  **Analyze (AI Models)**: Compare algorithms like Random Forest vs. XGBoost to validate prediction accuracy.
+            1.  **Run Risk Assessment**: The mortality risk assessment using Monte Carlo simulation.
+            2.  **Configure (Dashboard)**: Select the species group(s) and species of interest.
+            3.  **Simulate**: Adjust the *Growth Percentile* and *Competition Index* sliders to define your thinning strategy.
+            4.  **Visualize (Spatial Map)**: Toggle between the "Current" and "Post-Thinning" views to see the physical impact.
+            5.  **Individual Trees**: Dive into specific tree growth trends and mortality probabilities
             """
         )
 
@@ -194,7 +195,7 @@ def landing_page():
 pages = [
     st.Page(landing_page, title="Home", icon="🏠"),
     st.Page("pages/0_Dashboard.py", title="Analysis Dashboard", icon="📊"),
-    st.Page("pages/1_Spatial_Map.py", title="3D Forest Map", icon="🗺️"),
+    st.Page("pages/1_Spatial_Map.py", title="Spatial Map", icon="🗺️"),
     st.Page("pages/2_Individual_Growth.py", title="Growth Trends", icon="📈"),
 ]
 
